@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 )
 
 func main() {
@@ -40,9 +41,28 @@ func main() {
 
 	scanner := bufio.NewScanner(input)
 	rowCount := 0
+	querySequences := make(map[string]struct{})
+	targetSequences := make(map[string]struct{})
 
 	for scanner.Scan() {
+
 		rowCount++
+
+		line := scanner.Text()
+		fields := strings.Split(line, "\t")
+		if len(fields) < 10 {
+			continue
+		}
+
+		query := fields[8]
+		target := fields[9]
+
+		querySequences[query] = struct{}{}
+		if target != "*" {
+			targetSequences[target] = struct{}{}
+		} else {
+			targetSequences[query] = struct{}{}
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -52,5 +72,7 @@ func main() {
 
 	writer := bufio.NewWriter(output)
 	fmt.Fprintf(writer, "RowCount\t%d\n", rowCount)
+	fmt.Fprintf(writer, "UniqueQuerySequences\t%d\n", len(querySequences))
+	fmt.Fprintf(writer, "UniqueTargetSequences\t%d\n", len(targetSequences))
 	writer.Flush()
 }
