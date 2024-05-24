@@ -12,6 +12,14 @@ import (
 func main() {
 	inputFile := flag.String("input", "", "Input file (default: stdin)")
 	outputFile := flag.String("output", "", "Output file (default: stdout)")
+	flag.StringVar(inputFile, "i", "", "Input file (default: stdin)")
+	flag.StringVar(outputFile, "o", "", "Output file (default: stdout)")
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "  -i, --input  <file/stdin>\tInput  file (default: stdin)\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  -o, --output <file/stdout>\tOutput file (default: stdout)\n")
+		// flag.PrintDefaults()
+	}
 	flag.Parse()
 
 	var input *os.File
