@@ -17,7 +17,7 @@ func main() {
 	var output *os.File
 	var err error
 
-	if *inputFile == "" {
+	if *inputFile == "-" {
 		input = os.Stdin
 	} else {
 		input, err = os.Open(*inputFile)
@@ -28,7 +28,7 @@ func main() {
 		defer input.Close()
 	}
 
-	if *outputFile == "" {
+	if *outputFile == "-" {
 		output = os.Stdout
 	} else {
 		output, err = os.Create(*outputFile)
