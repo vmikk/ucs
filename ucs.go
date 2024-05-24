@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"compress/gzip"
 	"flag"
 	"fmt"
 	"os"
@@ -39,11 +40,26 @@ func main() {
 		defer output.Close()
 	}
 
-	scanner := bufio.NewScanner(input)
+	var scanner *bufio.Scanner
+
+	// Check if the input file is gzip-compressed
+	if strings.HasSuffix(*inputFile, ".gz") {
+		gzipReader, err := gzip.NewReader(input)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating gzip reader: %v\n", err)
+			os.Exit(1)
+		}
+		defer gzipReader.Close()
+		scanner = bufio.NewScanner(gzipReader)
+	} else {
+		scanner = bufio.NewScanner(input)
+	}
+
 	rowCount := 0
 	querySequences := make(map[string]struct{})
 	targetSequences := make(map[string]struct{})
 
+	// Process records
 	for scanner.Scan() {
 
 		rowCount++
