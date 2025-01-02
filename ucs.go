@@ -8,6 +8,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/parquet-go/parquet-go"
 )
 
 // Add new type to store command options
@@ -34,6 +36,22 @@ type UCRecord struct {
 	TargetLabel            string
 	Query                  string // Processed query name
 	OTU                    string // Processed OTU name
+}
+
+// Add new type for Parquet output
+type ParquetRecord struct {
+	RecordType             string  `parquet:"record_type"`
+	ClusterNumber          int     `parquet:"cluster_number"`
+	SeqLengthOrClusterSize int     `parquet:"seq_length_or_cluster_size"`
+	PercentIdentity        float64 `parquet:"percent_identity"`
+	Strand                 string  `parquet:"strand"`
+	UnusedField1           string  `parquet:"unused_field_1"`
+	UnusedField2           string  `parquet:"unused_field_2"`
+	Alignment              string  `parquet:"alignment"`
+	QueryLabel             string  `parquet:"query_label"`
+	TargetLabel            string  `parquet:"target_label"`
+	Query                  string  `parquet:"query"`
+	OTU                    string  `parquet:"otu"`
 }
 
 func main() {
@@ -211,6 +229,11 @@ func processUCFile(input *os.File, inputFileName string, opts Options) ([]UCReco
 }
 
 func writeUCRecords(writer *bufio.Writer, records []UCRecord, opts Options) error {
+	// Check if output is Parquet format
+	if strings.HasSuffix(opts.outputFile, ".parquet") {
+		return writeParquetRecords(opts.outputFile, records, opts)
+	}
+
 	if opts.mapOnly {
 		// Write header for Query-OTU mapping
 		_, err := fmt.Fprintf(writer, "Query\tOTU\n")
@@ -250,6 +273,56 @@ func writeUCRecords(writer *bufio.Writer, records []UCRecord, opts Options) erro
 			}
 		}
 	}
+	return nil
+}
+
+// Add new function for Parquet writing
+func writeParquetRecords(outputFile string, records []UCRecord, opts Options) error {
+
+	// Map-only mode (Query-OTU table)
+	if opts.mapOnly {
+		// Convert to simplified ParquetRecords for map-only mode
+		simpleRecords := make([]struct {
+			Query string `parquet:"query"`
+			OTU   string `parquet:"otu"`
+		}, len(records))
+
+		for i, record := range records {
+			simpleRecords[i].Query = record.Query
+			simpleRecords[i].OTU = record.OTU
+		}
+
+		if err := parquet.WriteFile(outputFile, simpleRecords); err != nil {
+			return fmt.Errorf("writing parquet file: %w", err)
+		}
+
+	} else {
+		// Full table mode (all columns)
+
+		// Convert to full ParquetRecords
+		parquetRecords := make([]ParquetRecord, len(records))
+		for i, record := range records {
+			parquetRecords[i] = ParquetRecord{
+				RecordType:             record.RecordType,
+				ClusterNumber:          record.ClusterNumber,
+				SeqLengthOrClusterSize: record.SeqLengthOrClusterSize,
+				PercentIdentity:        record.PercentIdentity,
+				Strand:                 record.Strand,
+				UnusedField1:           record.UnusedField1,
+				UnusedField2:           record.UnusedField2,
+				Alignment:              record.Alignment,
+				QueryLabel:             record.QueryLabel,
+				TargetLabel:            record.TargetLabel,
+				Query:                  record.Query,
+				OTU:                    record.OTU,
+			}
+		}
+
+		if err := parquet.WriteFile(outputFile, parquetRecords); err != nil {
+			return fmt.Errorf("writing parquet file: %w", err)
+		}
+	}
+
 	return nil
 }
 
