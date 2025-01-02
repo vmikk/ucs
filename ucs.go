@@ -135,30 +135,9 @@ func createOutputFile(fileName string) (*os.File, error) {
 }
 
 func processUCFile(input *os.File, inputFileName string, opts Options) ([]UCRecord, error) {
-	var scanner *bufio.Scanner
-
-	// Check if input is gzipped, either by filename or content
-	isGzipped := strings.HasSuffix(inputFileName, ".gz")
-	if !isGzipped && inputFileName == "-" {
-		// For stdin, peek at the first two bytes to check for gzip magic number
-		reader := bufio.NewReader(input)
-		magic, err := reader.Peek(2)
-		if err == nil && len(magic) == 2 && magic[0] == 0x1f && magic[1] == 0x8b {
-			isGzipped = true
-		}
-		// Create new scanner that includes the peeked bytes
-		scanner = bufio.NewScanner(reader)
-	}
-
-	if isGzipped {
-		gzipReader, err := gzip.NewReader(input)
-		if err != nil {
-			return nil, fmt.Errorf("creating gzip reader: %w", err)
-		}
-		defer gzipReader.Close()
-		scanner = bufio.NewScanner(gzipReader)
-	} else if scanner == nil { // if scanner wasn't created for stdin
-		scanner = bufio.NewScanner(input)
+	scanner, err := createScanner(input, inputFileName)
+	if err != nil {
+		return nil, fmt.Errorf("creating scanner: %w", err)
 	}
 
 	var records []UCRecord
@@ -387,16 +366,9 @@ func parseFloatOrZero(s string) *float64 {
 }
 
 func summarizeUC(input *os.File, inputFileName string, opts Options) (int, int, int, error) {
-	var scanner *bufio.Scanner
-	if strings.HasSuffix(inputFileName, ".gz") {
-		gzipReader, err := gzip.NewReader(input)
-		if err != nil {
-			return 0, 0, 0, fmt.Errorf("creating gzip reader: %w", err)
-		}
-		defer gzipReader.Close()
-		scanner = bufio.NewScanner(gzipReader)
-	} else {
-		scanner = bufio.NewScanner(input)
+	scanner, err := createScanner(input, inputFileName)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("creating scanner: %w", err)
 	}
 
 	rowCount := 0
@@ -467,4 +439,33 @@ func parseStrand(s string) *byte {
 		return nil
 	}
 	return &b
+}
+
+// New helper function to avoid code duplication
+func createScanner(input *os.File, inputFileName string) (*bufio.Scanner, error) {
+	var scanner *bufio.Scanner
+
+	// Check if input is gzipped, either by filename or content
+	isGzipped := strings.HasSuffix(inputFileName, ".gz")
+	if !isGzipped && inputFileName == "-" {
+		// For stdin, peek at the first two bytes to check for gzip magic number
+		reader := bufio.NewReader(input)
+		magic, err := reader.Peek(2)
+		if err == nil && len(magic) == 2 && magic[0] == 0x1f && magic[1] == 0x8b {
+			isGzipped = true
+		}
+		scanner = bufio.NewScanner(reader)
+	}
+
+	if isGzipped {
+		gzipReader, err := gzip.NewReader(input)
+		if err != nil {
+			return nil, fmt.Errorf("creating gzip reader: %w", err)
+		}
+		scanner = bufio.NewScanner(gzipReader)
+	} else if scanner == nil {
+		scanner = bufio.NewScanner(input)
+	}
+
+	return scanner, nil
 }
