@@ -13,6 +13,12 @@ import (
 	"github.com/parquet-go/parquet-go/compress/zstd"
 )
 
+const (
+	gzipMagic1 = 0x1f
+	gzipMagic2 = 0x8b
+	asterisk   = "*"
+)
+
 // Add new type to store command options
 type Options struct {
 	inputFile  string
