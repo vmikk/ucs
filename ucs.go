@@ -96,26 +96,49 @@ func main() {
 func parseFlags() Options {
 	opts := Options{}
 
-	flag.StringVar(&opts.inputFile, "input", "-", "Input file (default: stdin)")
-	flag.StringVar(&opts.outputFile, "output", "-", "Output file (default: stdout)")
-	flag.StringVar(&opts.inputFile, "i", "-", "Input file (default: stdin)")
-	flag.StringVar(&opts.outputFile, "o", "-", "Output file (default: stdout)")
-	flag.BoolVar(&opts.summary, "summary", false, "Print summary statistics (default: false)")
-	flag.BoolVar(&opts.summary, "s", false, "Print summary statistics (default: false)")
-	flag.BoolVar(&opts.mapOnly, "map-only", true, "Output only Query-OTU mapping (default: true)")
-	flag.BoolVar(&opts.mapOnly, "m", true, "Output only Query-OTU mapping (default: true)")
-	flag.BoolVar(&opts.splitSeqID, "split-id", true, "Split sequence IDs at semicolon (default: true)")
-	flag.BoolVar(&opts.removeDups, "rm-dups", true, "Remove duplicate entries (default: true)")
+	// Define flag pairs with long and short forms
+	flagPairs := []struct {
+		long, short string
+		value       interface{}
+		usage       string
+		def         interface{}
+	}{
+		{"input", "i", &opts.inputFile, "Input file (default: stdin)", "-"},
+		{"output", "o", &opts.outputFile, "Output file (default: stdout)", "-"},
+		{"summary", "s", &opts.summary, "Print summary statistics", false},
+		{"map-only", "m", &opts.mapOnly, "Output only Query-OTU mapping", true},
+		{"split-id", "", &opts.splitSeqID, "Split sequence IDs at semicolon", true},
+		{"rm-dups", "", &opts.removeDups, "Remove duplicate entries", true},
+	}
 
+	// Register all flags
+	for _, f := range flagPairs {
+		switch v := f.value.(type) {
+		case *string:
+			flag.StringVar(v, f.long, f.def.(string), f.usage)
+			if f.short != "" {
+				flag.StringVar(v, f.short, f.def.(string), f.usage)
+			}
+		case *bool:
+			flag.BoolVar(v, f.long, f.def.(bool), f.usage)
+			if f.short != "" {
+				flag.BoolVar(v, f.short, f.def.(bool), f.usage)
+			}
+		}
+	}
+
+	// Custom usage message
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
-		fmt.Fprintf(flag.CommandLine.Output(), "  -i, --input    <file/stdin>\tInput file (default: stdin)\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "  -o, --output   <file/stdout>\tOutput file (default: stdout)\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "  -s, --summary\t\t\tPrint summary statistics (default: false)\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "  -m, --map-only\t\tOutput only Query-OTU mapping (default: true)\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "      --split-id\t\tSplit sequence IDs at semicolon (default: true)\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "      --rm-dups\t\t\tRemove duplicate entries (default: true)\n")
+		for _, f := range flagPairs {
+			shortFlag := ""
+			if f.short != "" {
+				shortFlag = fmt.Sprintf("-%s, ", f.short)
+			}
+			fmt.Fprintf(flag.CommandLine.Output(), "  %s--%s\t%s\n", shortFlag, f.long, f.usage)
+		}
 	}
+
 	flag.Parse()
 	return opts
 }
@@ -137,7 +160,7 @@ func createOutputFile(fileName string) (*os.File, error) {
 func processUCFile(input *os.File, inputFileName string, opts Options) ([]UCRecord, error) {
 	scanner, err := createScanner(input, inputFileName)
 	if err != nil {
-		return nil, fmt.Errorf("creating scanner: %w", err)
+		return nil, err
 	}
 
 	var records []UCRecord
@@ -368,7 +391,7 @@ func parseFloatOrZero(s string) *float64 {
 func summarizeUC(input *os.File, inputFileName string, opts Options) (int, int, int, error) {
 	scanner, err := createScanner(input, inputFileName)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("creating scanner: %w", err)
+		return 0, 0, 0, err
 	}
 
 	rowCount := 0
