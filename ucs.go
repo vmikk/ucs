@@ -231,7 +231,7 @@ func processUCFile(input *os.File, inputFileName string, opts Options) ([]UCReco
 
 	// Print duplicate count to stderr in red color if any duplicates were found
 	if duplicateCount > 0 {
-		fmt.Fprintf(os.Stderr, "\033[31mRemoved %d duplicate entries\033[0m\n", duplicateCount)
+		fmt.Fprintf(os.Stderr, "\033[31mucs: removed %d duplicate entries\033[0m\n", duplicateCount)
 	}
 
 	if err := scanner.Err(); err != nil {
