@@ -13,12 +13,6 @@ import (
 	"github.com/parquet-go/parquet-go/compress/zstd"
 )
 
-const (
-	gzipMagic1 = 0x1f
-	gzipMagic2 = 0x8b
-	asterisk   = "*"
-)
-
 // Add new type to store command options
 type Options struct {
 	inputFile  string
@@ -75,12 +69,12 @@ func main() {
 	defer output.Close()
 
 	if opts.summary {
-		rowCount, uniqueQuerySequences, uniqueTargetSequences, err := summarizeUC(input, opts.inputFile, opts)
+		rowCount, uniqueQuerySequences, uniqueTargetSequences, multiMappedQueries, err := summarizeUC(input, opts.inputFile, opts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error processing file: %v\n", err)
 			os.Exit(1)
 		}
-		err = writeSummary(output, rowCount, uniqueQuerySequences, uniqueTargetSequences)
+		err = writeSummary(output, rowCount, uniqueQuerySequences, uniqueTargetSequences, multiMappedQueries)
 	} else {
 		records, err := processUCFile(input, opts.inputFile, opts)
 		if err != nil {
@@ -402,15 +396,16 @@ func parseStrand(s string) *byte {
 }
 
 // UC file summary
-func summarizeUC(input *os.File, inputFileName string, opts Options) (int, int, int, error) {
+func summarizeUC(input *os.File, inputFileName string, opts Options) (int, int, int, int, error) {
 	scanner, err := createScanner(input, inputFileName)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, 0, err
 	}
 
 	rowCount := 0
 	querySequences := make(map[string]struct{})
 	targetSequences := make(map[string]struct{})
+	queryToTargets := make(map[string]map[string]struct{})
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -428,39 +423,81 @@ func summarizeUC(input *os.File, inputFileName string, opts Options) (int, int, 
 		queryLabel := splitSeqID(fields[8], opts.splitSeqID)
 		querySequences[queryLabel] = struct{}{}
 
+		// Initialize map for this query if it doesn't exist
+		if _, exists := queryToTargets[queryLabel]; !exists {
+			queryToTargets[queryLabel] = make(map[string]struct{})
+		}
+
 		// For centroid records (C), use Query as Target
 		if fields[0] == "C" {
 			targetSequences[queryLabel] = struct{}{}
+			queryToTargets[queryLabel][queryLabel] = struct{}{}
 		} else if fields[9] != "*" {
 			targetLabel := splitSeqID(fields[9], opts.splitSeqID)
 			targetSequences[targetLabel] = struct{}{}
+			queryToTargets[queryLabel][targetLabel] = struct{}{}
+		}
+	}
+
+	// Count queries mapped to multiple targets
+	multiMappedQueries := 0
+	for _, targets := range queryToTargets {
+		if len(targets) > 1 {
+			multiMappedQueries++
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		return 0, 0, 0, fmt.Errorf("reading input: %w", err)
+		return 0, 0, 0, 0, fmt.Errorf("reading input: %w", err)
 	}
 
-	return rowCount, len(querySequences), len(targetSequences), nil
+	return rowCount, len(querySequences), len(targetSequences), multiMappedQueries, nil
 }
 
-func writeSummary(output *os.File, rowCount, uniqueQuerySequences, uniqueTargetSequences int) error {
+func writeSummary(output *os.File, rowCount, uniqueQuerySequences, uniqueTargetSequences, multiMappedQueries int) error {
 	writer := bufio.NewWriter(output)
 	defer writer.Flush()
 
-	_, err := fmt.Fprintf(writer, "Total records: %d\n", rowCount)
-	if err != nil {
-		return err
+	// Define the rows with their labels and values
+	rows := []struct {
+		label string
+		value int
+	}{
+		{"Total lines in the file:", rowCount},
+		{"Unique query sequences:", uniqueQuerySequences},
+		{"Unique target sequences:", uniqueTargetSequences},
+		{"Queries mapped to multiple targets:", multiMappedQueries},
 	}
 
-	_, err = fmt.Fprintf(writer, "Unique query sequences: %d\n", uniqueQuerySequences)
-	if err != nil {
-		return err
+	// Find the longest label and the longest number
+	maxLabelWidth := 0
+	maxNumberWidth := 0
+	for _, row := range rows {
+		if len(row.label) > maxLabelWidth {
+			maxLabelWidth = len(row.label)
+		}
+		numWidth := len(strconv.Itoa(row.value))
+		if numWidth > maxNumberWidth {
+			maxNumberWidth = numWidth
+		}
 	}
 
-	_, err = fmt.Fprintf(writer, "Unique target sequences: %d\n", uniqueTargetSequences)
-	if err != nil {
-		return err
+	// Create format string with calculated widths
+	format := fmt.Sprintf("%%-%ds %%%dd\n", maxLabelWidth, maxNumberWidth)
+
+	// Print each row
+	for _, row := range rows {
+		if row.label == "Queries mapped to multiple targets:" && row.value > 0 {
+			_, err := fmt.Fprintf(writer, "\033[31m"+format+"\033[0m", row.label, row.value)
+			if err != nil {
+				return err
+			}
+		} else {
+			_, err := fmt.Fprintf(writer, format, row.label, row.value)
+			if err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
