@@ -97,6 +97,7 @@ func fatalError(format string, a ...interface{}) {
 	os.Exit(1)
 }
 
+// Parse command line flags
 func parseFlags() Options {
 	opts := Options{}
 
@@ -115,20 +116,24 @@ func parseFlags() Options {
 		{"rm-dups", "", &opts.removeDups, "Remove duplicate Query-Target pairs (default: true)", true},
 	}
 
-	// Register all flags
-	for _, f := range flagPairs {
-		switch v := f.value.(type) {
+	// Register all flags using a helper function
+	registerFlag := func(long, short string, value interface{}, usage string, def interface{}) {
+		switch v := value.(type) {
 		case *string:
-			flag.StringVar(v, f.long, f.def.(string), f.usage)
-			if f.short != "" {
-				flag.StringVar(v, f.short, f.def.(string), f.usage)
+			flag.StringVar(v, long, def.(string), usage)
+			if short != "" {
+				flag.StringVar(v, short, def.(string), usage)
 			}
 		case *bool:
-			flag.BoolVar(v, f.long, f.def.(bool), f.usage)
-			if f.short != "" {
-				flag.BoolVar(v, f.short, f.def.(bool), f.usage)
+			flag.BoolVar(v, long, def.(bool), usage)
+			if short != "" {
+				flag.BoolVar(v, short, def.(bool), usage)
 			}
 		}
+	}
+
+	for _, f := range flagPairs {
+		registerFlag(f.long, f.short, f.value, f.usage, f.def)
 	}
 
 	// Custom usage message
