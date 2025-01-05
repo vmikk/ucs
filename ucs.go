@@ -219,7 +219,12 @@ func processUCFile(input *os.File, inputFileName string, opts Options) ([]UCReco
 
 		// Check for duplicates if removal is enabled
 		if opts.removeDups {
-			pairKey := record.Query + "\t" + record.Target
+			var pairKeyBuilder strings.Builder
+			pairKeyBuilder.WriteString(record.Query)
+			pairKeyBuilder.WriteByte('\t')
+			pairKeyBuilder.WriteString(record.Target)
+			pairKey := pairKeyBuilder.String()
+
 			if _, exists := seenPairs[pairKey]; exists {
 				duplicateCount++
 				continue
