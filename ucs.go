@@ -29,32 +29,32 @@ type Options struct {
 	removeDups bool
 }
 
-// Add new types
+// UC record type
 type UCRecord struct {
-	RecordType             string
-	ClusterNumber          uint32
-	SeqLengthOrClusterSize uint32
-	PercentIdentity        *float64
-	Strand                 *byte
-	UnusedField1           string
-	UnusedField2           string
-	Alignment              string
-	Query                  string
-	Target                 string
+	RecordType    string   // Field 0: Record type (C/S/H/N)
+	ClusterNumber uint32   // Field 1: Cluster number
+	Size          uint32   // Field 2: Sequence length/cluster size
+	Identity      *float64 // Field 3: % identity with centroid
+	Strand        *byte    // Field 4: Strand +/-
+	Unused1       string   // Field 5: unused
+	Unused2       string   // Field 6: unused
+	CIGAR         string   // Field 7: CIGAR string
+	Query         string   // Field 8: Query sequence ID
+	Target        string   // Field 9: Target/centroid sequence ID
 }
 
 // Add new type for Parquet output
 type ParquetRecord struct {
-	RecordType             string   `parquet:"record_type"`
-	ClusterNumber          uint32   `parquet:"cluster_number"`
-	SeqLengthOrClusterSize uint32   `parquet:"seq_length_or_cluster_size"`
-	PercentIdentity        *float64 `parquet:"percent_identity"`
-	Strand                 *byte    `parquet:"strand"`
-	UnusedField1           string   `parquet:"unused_field_1"`
-	UnusedField2           string   `parquet:"unused_field_2"`
-	Alignment              string   `parquet:"alignment"`
-	Query                  string   `parquet:"query"`
-	Target                 string   `parquet:"target"`
+	RecordType    string   `parquet:"record_type"`
+	ClusterNumber uint32   `parquet:"cluster_number"`
+	Size          uint32   `parquet:"size"`
+	Identity      *float64 `parquet:"identity"`
+	Strand        *byte    `parquet:"strand"`
+	Unused1       string   `parquet:"unused_1"`
+	Unused2       string   `parquet:"unused_2"`
+	CIGAR         string   `parquet:"cigar"`
+	Query         string   `parquet:"query"`
+	Target        string   `parquet:"target"`
 }
 
 func main() {
@@ -191,16 +191,16 @@ func processUCFile(input *os.File, inputFileName string, opts Options) ([]UCReco
 		targetLabel := splitSeqID(fields[9], opts.splitSeqID)
 
 		record := UCRecord{
-			RecordType:             fields[0],
-			ClusterNumber:          parseIntOrZero(fields[1]),
-			SeqLengthOrClusterSize: parseIntOrZero(fields[2]),
-			PercentIdentity:        parseFloatOrZero(fields[3]),
-			Strand:                 parseStrand(fields[4]),
-			UnusedField1:           fields[5],
-			UnusedField2:           fields[6],
-			Alignment:              fields[7],
-			Query:                  queryLabel,
-			Target:                 targetLabel,
+			RecordType:    fields[0],
+			ClusterNumber: parseIntOrZero(fields[1]),
+			Size:          parseIntOrZero(fields[2]),
+			Identity:      parseFloatOrZero(fields[3]),
+			Strand:        parseStrand(fields[4]),
+			Unused1:       fields[5],
+			Unused2:       fields[6],
+			CIGAR:         fields[7],
+			Query:         queryLabel,
+			Target:        targetLabel,
 		}
 
 		// Process OTU mapping based on record type
@@ -263,7 +263,7 @@ func writeUCRecords(writer *bufio.Writer, records []UCRecord, opts Options) erro
 		}
 	} else {
 		// Write header for full table
-		_, err := fmt.Fprintf(writer, "recordType\tclusterNumber\tseqLengthOrClusterSize\tpercentIdentity\tstrand\tunusedField1\tunusedField2\talignment\tquery\ttarget\n")
+		_, err := fmt.Fprintf(writer, "recordType\tclusterNumber\tsize\tidentity\tstrand\tunused1\tunused2\tcigar\tquery\ttarget\n")
 		if err != nil {
 			return err
 		}
@@ -276,19 +276,19 @@ func writeUCRecords(writer *bufio.Writer, records []UCRecord, opts Options) erro
 			}
 
 			identityStr := "*"
-			if record.PercentIdentity != nil {
-				identityStr = fmt.Sprintf("%.2f", *record.PercentIdentity)
+			if record.Identity != nil {
+				identityStr = fmt.Sprintf("%.2f", *record.Identity)
 			}
 
 			_, err := fmt.Fprintf(writer, "%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 				record.RecordType,
 				record.ClusterNumber,
-				record.SeqLengthOrClusterSize,
+				record.Size,
 				identityStr,
 				strandStr,
-				record.UnusedField1,
-				record.UnusedField2,
-				record.Alignment,
+				record.Unused1,
+				record.Unused2,
+				record.CIGAR,
 				record.Query,
 				record.Target)
 			if err != nil {
@@ -299,7 +299,7 @@ func writeUCRecords(writer *bufio.Writer, records []UCRecord, opts Options) erro
 	return nil
 }
 
-// Add new function for Parquet writing
+// Parquet writing function
 func writeParquetRecords(outputFile string, records []UCRecord, opts Options) error {
 	// Open the output file
 	f, err := os.Create(outputFile)
@@ -343,18 +343,7 @@ func writeParquetRecords(outputFile string, records []UCRecord, opts Options) er
 		// Convert to parquet records
 		parquetRecords := make([]ParquetRecord, len(records))
 		for i, record := range records {
-			parquetRecords[i] = ParquetRecord{
-				RecordType:             record.RecordType,
-				ClusterNumber:          record.ClusterNumber,
-				SeqLengthOrClusterSize: record.SeqLengthOrClusterSize,
-				PercentIdentity:        record.PercentIdentity,
-				Strand:                 record.Strand,
-				UnusedField1:           record.UnusedField1,
-				UnusedField2:           record.UnusedField2,
-				Alignment:              record.Alignment,
-				Query:                  record.Query,
-				Target:                 record.Target,
-			}
+			parquetRecords[i] = record.ToParquet()
 		}
 
 		// Write records
@@ -366,7 +355,7 @@ func writeParquetRecords(outputFile string, records []UCRecord, opts Options) er
 	return nil
 }
 
-// Helper functions
+// Split sequence ID at semicolon
 func splitSeqID(id string, split bool) string {
 	if !split {
 		return id
@@ -375,7 +364,11 @@ func splitSeqID(id string, split bool) string {
 	return parts[0]
 }
 
+// Parse integer fields (ClusterNumber and Size)
 func parseIntOrZero(s string) uint32 {
+	if s == "*" {
+		return 0
+	}
 	val, err := strconv.ParseUint(s, 10, 32)
 	if err != nil {
 		return 0
@@ -383,6 +376,7 @@ func parseIntOrZero(s string) uint32 {
 	return uint32(val)
 }
 
+// Parse float fields (Identity)
 func parseFloatOrZero(s string) *float64 {
 	if s == "*" {
 		return nil
@@ -394,6 +388,20 @@ func parseFloatOrZero(s string) *float64 {
 	return &val
 }
 
+// Parse strand
+func parseStrand(s string) *byte {
+	if s == "+" {
+		b := byte('+')
+		return &b
+	}
+	if s == "-" {
+		b := byte('-')
+		return &b
+	}
+	return nil
+}
+
+// UC file summary
 func summarizeUC(input *os.File, inputFileName string, opts Options) (int, int, int, error) {
 	scanner, err := createScanner(input, inputFileName)
 	if err != nil {
@@ -458,19 +466,7 @@ func writeSummary(output *os.File, rowCount, uniqueQuerySequences, uniqueTargetS
 	return nil
 }
 
-// Helper function to parse strand
-func parseStrand(s string) *byte {
-	if s == "*" || len(s) == 0 {
-		return nil
-	}
-	b := s[0] // take first byte
-	if b != '+' && b != '-' {
-		return nil
-	}
-	return &b
-}
-
-// New helper function to avoid code duplication
+// Buffered scanner for input file
 func createScanner(input *os.File, inputFileName string) (*bufio.Scanner, error) {
 	var scanner *bufio.Scanner
 
@@ -497,4 +493,20 @@ func createScanner(input *os.File, inputFileName string) (*bufio.Scanner, error)
 	}
 
 	return scanner, nil
+}
+
+// Convert UCRecord to ParquetRecord
+func (r UCRecord) ToParquet() ParquetRecord {
+	return ParquetRecord{
+		RecordType:    r.RecordType,
+		ClusterNumber: uint32(r.ClusterNumber),
+		Size:          uint32(r.Size),
+		Identity:      r.Identity,
+		Strand:        r.Strand,
+		Unused1:       r.Unused1,
+		Unused2:       r.Unused2,
+		CIGAR:         r.CIGAR,
+		Query:         r.Query,
+		Target:        r.Target,
+	}
 }
