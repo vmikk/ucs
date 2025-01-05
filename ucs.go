@@ -425,30 +425,26 @@ func summarizeUC(input *os.File, inputFileName string, opts Options) (int, int, 
 	for scanner.Scan() {
 		line := scanner.Text()
 		fields := strings.Split(line, "\t")
-		if len(fields) < 10 {
-			continue
-		}
 
-		// Skip S records as they are redundant
-		if fields[0] == "S" {
+		// Skip broken lines
+		// Skip C records as they are redundant
+		if len(fields) < 10 || fields[0] == "C" {
 			continue
 		}
 
 		rowCount++
 		queryLabel := splitSeqID(fields[8], opts.splitSeqID)
-		querySequences[queryLabel] = struct{}{}
 
-		// Initialize map for this query if it doesn't exist
+		targetLabel := splitSeqID(fields[9], opts.splitSeqID)
+		if fields[0] == "S" {
+			targetLabel = queryLabel
+		}
+
 		if _, exists := queryToTargets[queryLabel]; !exists {
 			queryToTargets[queryLabel] = make(map[string]struct{})
 		}
 
-		// For centroid records (C), use Query as Target
-		if fields[0] == "C" {
-			targetSequences[queryLabel] = struct{}{}
-			queryToTargets[queryLabel][queryLabel] = struct{}{}
-		} else if fields[9] != "*" {
-			targetLabel := splitSeqID(fields[9], opts.splitSeqID)
+		if targetLabel != "*" {
 			targetSequences[targetLabel] = struct{}{}
 			queryToTargets[queryLabel][targetLabel] = struct{}{}
 		}
