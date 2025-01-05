@@ -179,13 +179,11 @@ func processUCFile(input *os.File, inputFileName string, opts Options) ([]UCReco
 	for scanner.Scan() {
 		line := scanner.Text()
 		fields := strings.Split(line, "\t")
-		if len(fields) < 10 {
-			continue
-		}
 
+		// Skip broken lines
 		// Skip C records - they are redundant with S records
 		// H & S records go first in the file, while C records are added to the very end
-		if fields[0] == "C" {
+		if len(fields) < 10 || fields[0] == "C" {
 			continue
 		}
 
