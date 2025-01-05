@@ -515,31 +515,27 @@ func writeSummary(output *os.File, rowCount, uniqueQuerySequences, uniqueTargetS
 
 // Buffered scanner for input file
 func createScanner(input *os.File, inputFileName string) (*bufio.Scanner, error) {
-	var scanner *bufio.Scanner
+	reader := bufio.NewReader(input)
 
 	// Check if input is gzipped, either by filename or content
 	isGzipped := strings.HasSuffix(inputFileName, ".gz")
 	if !isGzipped && inputFileName == "-" {
 		// For stdin, peek at the first two bytes to check for gzip magic number
-		reader := bufio.NewReader(input)
 		magic, err := reader.Peek(2)
 		if err == nil && len(magic) == 2 && magic[0] == 0x1f && magic[1] == 0x8b {
 			isGzipped = true
 		}
-		scanner = bufio.NewScanner(reader)
 	}
 
 	if isGzipped {
-		gzipReader, err := gzip.NewReader(input)
+		gzipReader, err := gzip.NewReader(reader)
 		if err != nil {
 			return nil, fmt.Errorf("creating gzip reader: %w", err)
 		}
-		scanner = bufio.NewScanner(gzipReader)
-	} else if scanner == nil {
-		scanner = bufio.NewScanner(input)
+		return bufio.NewScanner(gzipReader), nil
 	}
 
-	return scanner, nil
+	return bufio.NewScanner(reader), nil
 }
 
 // Convert UCRecord to ParquetRecord
