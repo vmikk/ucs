@@ -107,8 +107,8 @@ func parseFlags() Options {
 		{"output", "o", &opts.outputFile, "Output file (default: stdout)", "-"},
 		{"summary", "s", &opts.summary, "Print summary statistics", false},
 		{"map-only", "m", &opts.mapOnly, "Output only Query-OTU mapping", true},
-		{"split-id", "", &opts.splitSeqID, "Split sequence IDs at semicolon", true},
-		{"rm-dups", "", &opts.removeDups, "Remove duplicate entries", true},
+		{"split-id", "", &opts.splitSeqID, "Split sequence IDs at semicolon (default: true)", true},
+		{"rm-dups", "", &opts.removeDups, "Remove duplicate Query-Target pairs (default: true)", true},
 	}
 
 	// Register all flags
