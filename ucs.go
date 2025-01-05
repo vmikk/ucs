@@ -250,26 +250,21 @@ func writeUCRecords(writer *bufio.Writer, records []UCRecord, opts Options) erro
 		return writeParquetRecords(opts.outputFile, records, opts)
 	}
 
+	var sb strings.Builder
 	if opts.mapOnly {
 		// Write header for Query-OTU mapping
-		_, err := fmt.Fprintf(writer, "Query\tOTU\n")
-		if err != nil {
-			return err
-		}
+		sb.WriteString("Query\tOTU\n")
 
 		// Write data
 		for _, record := range records {
-			_, err := fmt.Fprintf(writer, "%s\t%s\n", record.Query, record.Target)
-			if err != nil {
-				return err
-			}
+			sb.WriteString(record.Query)
+			sb.WriteByte('\t')
+			sb.WriteString(record.Target)
+			sb.WriteByte('\n')
 		}
 	} else {
 		// Write header for full table
-		_, err := fmt.Fprintf(writer, "recordType\tclusterNumber\tsize\tidentity\tstrand\tunused1\tunused2\tcigar\tquery\ttarget\n")
-		if err != nil {
-			return err
-		}
+		sb.WriteString("recordType\tclusterNumber\tsize\tidentity\tstrand\tunused1\tunused2\tcigar\tquery\ttarget\n")
 
 		// Write data
 		for _, record := range records {
@@ -283,23 +278,31 @@ func writeUCRecords(writer *bufio.Writer, records []UCRecord, opts Options) erro
 				identityStr = fmt.Sprintf("%.2f", *record.Identity)
 			}
 
-			_, err := fmt.Fprintf(writer, "%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				record.RecordType,
-				record.ClusterNumber,
-				record.Size,
-				identityStr,
-				strandStr,
-				record.Unused1,
-				record.Unused2,
-				record.CIGAR,
-				record.Query,
-				record.Target)
-			if err != nil {
-				return err
-			}
+			sb.WriteString(record.RecordType)
+			sb.WriteByte('\t')
+			sb.WriteString(strconv.FormatUint(uint64(record.ClusterNumber), 10))
+			sb.WriteByte('\t')
+			sb.WriteString(strconv.FormatUint(uint64(record.Size), 10))
+			sb.WriteByte('\t')
+			sb.WriteString(identityStr)
+			sb.WriteByte('\t')
+			sb.WriteString(strandStr)
+			sb.WriteByte('\t')
+			sb.WriteString(record.Unused1)
+			sb.WriteByte('\t')
+			sb.WriteString(record.Unused2)
+			sb.WriteByte('\t')
+			sb.WriteString(record.CIGAR)
+			sb.WriteByte('\t')
+			sb.WriteString(record.Query)
+			sb.WriteByte('\t')
+			sb.WriteString(record.Target)
+			sb.WriteByte('\n')
 		}
 	}
-	return nil
+
+	_, err := writer.WriteString(sb.String())
+	return err
 }
 
 // Parquet writing function
@@ -494,22 +497,20 @@ func writeSummary(output *os.File, rowCount, uniqueQuerySequences, uniqueTargetS
 	// Create format string with calculated widths
 	format := fmt.Sprintf("%%-%ds %%%dd\n", maxLabelWidth, maxNumberWidth)
 
+	var sb strings.Builder
 	// Print each row
 	for _, row := range rows {
 		if row.label == "Queries mapped to multiple targets:" && row.value > 0 {
-			_, err := fmt.Fprintf(writer, "\033[31m"+format+"\033[0m", row.label, row.value)
-			if err != nil {
-				return err
-			}
+			sb.WriteString(fmt.Sprintf("\033[31m"+format+"\033[0m", row.label, row.value))
 		} else {
-			_, err := fmt.Fprintf(writer, format, row.label, row.value)
-			if err != nil {
-				return err
-			}
+			sb.WriteString(fmt.Sprintf(format, row.label, row.value))
 		}
 	}
 
-	return nil
+	writer := bufio.NewWriter(output)
+	defer writer.Flush()
+	_, err := writer.WriteString(sb.String())
+	return err
 }
 
 // Buffered scanner for input file
