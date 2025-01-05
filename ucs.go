@@ -56,41 +56,45 @@ func main() {
 
 	input, err := openInputFile(opts.inputFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening input file: %v\n", err)
-		os.Exit(1)
+		fatalError("Error opening input file: %v", err)
 	}
 	defer input.Close()
 
 	output, err := createOutputFile(opts.outputFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
-		os.Exit(1)
+		fatalError("Error creating output file: %v", err)
 	}
 	defer output.Close()
 
 	if opts.summary {
 		rowCount, uniqueQuerySequences, uniqueTargetSequences, multiMappedQueries, err := summarizeUC(input, opts.inputFile, opts)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error processing file: %v\n", err)
-			os.Exit(1)
+			fatalError("Error processing file: %v", err)
 		}
 		err = writeSummary(output, rowCount, uniqueQuerySequences, uniqueTargetSequences, multiMappedQueries)
 	} else {
 		records, err := processUCFile(input, opts.inputFile, opts)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error processing file: %v\n", err)
-			os.Exit(1)
+			fatalError("Error processing file: %v", err)
 		}
 
 		writer := bufio.NewWriter(output)
 		err = writeUCRecords(writer, records, opts)
+		if err != nil {
+			fatalError("Error writing output: %v", err)
+		}
 		writer.Flush()
 	}
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing output: %v\n", err)
-		os.Exit(1)
+		fatalError("Error writing output: %v", err)
 	}
+}
+
+// Centralized error handling helper
+func fatalError(format string, a ...interface{}) {
+	fmt.Fprintf(os.Stderr, format+"\n", a...)
+	os.Exit(1)
 }
 
 func parseFlags() Options {
