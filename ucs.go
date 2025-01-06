@@ -541,8 +541,8 @@ func createScanner(input *os.File, inputFileName string) (*bufio.Scanner, error)
 func (r UCRecord) ToParquet() ParquetRecord {
 	return ParquetRecord{
 		RecordType:    r.RecordType,
-		ClusterNumber: uint32(r.ClusterNumber),
-		Size:          uint32(r.Size),
+		ClusterNumber: r.ClusterNumber,
+		Size:          r.Size,
 		Identity:      r.Identity,
 		Strand:        r.Strand,
 		Unused1:       r.Unused1,
