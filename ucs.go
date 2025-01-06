@@ -466,9 +466,6 @@ func summarizeUC(input *os.File, inputFileName string, opts Options) (int, int, 
 }
 
 func writeSummary(output *os.File, rowCount, uniqueQuerySequences, uniqueTargetSequences, multiMappedQueries int) error {
-	writer := bufio.NewWriter(output)
-	defer writer.Flush()
-
 	// Define the rows with their labels and values
 	rows := []struct {
 		label string
