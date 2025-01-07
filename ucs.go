@@ -15,12 +15,13 @@ import (
 
 // Add new type to store command options
 type Options struct {
-	inputFile  string
-	outputFile string
-	summary    bool
-	mapOnly    bool
-	splitSeqID bool
-	removeDups bool
+	inputFile   string
+	outputFile  string
+	summary     bool
+	mapOnly     bool
+	splitSeqID  bool
+	removeDups  bool
+	multiMapped bool
 }
 
 // UC record type
@@ -138,6 +139,7 @@ func parseFlags() Options {
 		{"map-only", "m", &opts.mapOnly, "Output only Query-OTU mapping", true},
 		{"split-id", "S", &opts.splitSeqID, "Split sequence IDs at semicolon (default: true)", true},
 		{"rm-dups", "d", &opts.removeDups, "Remove duplicate Query-Target pairs (default: true)", true},
+		{"multi-mapped", "M", &opts.multiMapped, "Output only queries mapped to multiple targets", false},
 	}
 
 	// Register all flags using a helper function
@@ -197,8 +199,9 @@ func processUCFile(input *os.File, inputFileName string, opts Options) ([]UCReco
 	}
 
 	var records []UCRecord
-	seenPairs := make(map[string]struct{}) // For duplicate detection
-	duplicateCount := 0                    // Track number of duplicates
+	seenPairs := make(map[string]struct{})        // For duplicate detection
+	queryToTargets := make(map[string][]UCRecord) // Track targets per query
+	duplicateCount := 0
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -256,7 +259,27 @@ func processUCFile(input *os.File, inputFileName string, opts Options) ([]UCReco
 			seenPairs[pairKey] = struct{}{}
 		}
 
-		records = append(records, record)
+		if opts.multiMapped {
+			queryToTargets[record.Query] = append(queryToTargets[record.Query], record)
+		} else {
+			records = append(records, record)
+		}
+	}
+
+	// If multi-mapped mode is enabled, filter for queries with multiple targets
+	if opts.multiMapped {
+		for _, queryRecords := range queryToTargets {
+			// Get unique targets for this query
+			targets := make(map[string]struct{})
+			for _, r := range queryRecords {
+				targets[r.Target] = struct{}{}
+			}
+
+			// If query maps to multiple targets, add all its records
+			if len(targets) > 1 {
+				records = append(records, queryRecords...)
+			}
+		}
 	}
 
 	// Print duplicate count to stderr in red color if any duplicates were found
