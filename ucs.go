@@ -43,12 +43,36 @@ type ParquetRecord struct {
 	ClusterNumber uint32   `parquet:"cluster_number"`
 	Size          uint32   `parquet:"size"`
 	Identity      *float64 `parquet:"identity"`
-	Strand        *byte    `parquet:"strand"`
+	Strand        string   `parquet:"strand"`
 	Unused1       string   `parquet:"unused_1"`
 	Unused2       string   `parquet:"unused_2"`
 	CIGAR         string   `parquet:"cigar"`
 	Query         string   `parquet:"query"`
 	Target        string   `parquet:"target"`
+}
+
+// Convert UCRecord to ParquetRecord
+func (r UCRecord) ToParquet() ParquetRecord {
+	// Convert strand byte pointer to string
+	var strandStr string
+	if r.Strand != nil {
+		strandStr = string(*r.Strand)
+	} else {
+		strandStr = "*"
+	}
+
+	return ParquetRecord{
+		RecordType:    r.RecordType,
+		ClusterNumber: r.ClusterNumber,
+		Size:          r.Size,
+		Identity:      r.Identity,
+		Strand:        strandStr,
+		Unused1:       r.Unused1,
+		Unused2:       r.Unused2,
+		CIGAR:         r.CIGAR,
+		Query:         r.Query,
+		Target:        r.Target,
+	}
 }
 
 func main() {
@@ -532,20 +556,4 @@ func createScanner(input *os.File, inputFileName string) (*bufio.Scanner, error)
 	}
 
 	return bufio.NewScanner(reader), nil
-}
-
-// Convert UCRecord to ParquetRecord
-func (r UCRecord) ToParquet() ParquetRecord {
-	return ParquetRecord{
-		RecordType:    r.RecordType,
-		ClusterNumber: r.ClusterNumber,
-		Size:          r.Size,
-		Identity:      r.Identity,
-		Strand:        r.Strand,
-		Unused1:       r.Unused1,
-		Unused2:       r.Unused2,
-		CIGAR:         r.CIGAR,
-		Query:         r.Query,
-		Target:        r.Target,
-	}
 }
