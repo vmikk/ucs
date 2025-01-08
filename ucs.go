@@ -208,9 +208,7 @@ func processUCFile(input *os.File, inputFileName string, opts Options) ([]UCReco
 		fields := strings.Split(line, "\t")
 
 		// Skip broken lines
-		// Skip C records - they are redundant with S records
-		// H & S records go first in the file, while C records are added to the very end
-		if len(fields) < 10 || fields[0] == "C" {
+		if len(fields) < 10 {
 			continue
 		}
 
@@ -236,11 +234,11 @@ func processUCFile(input *os.File, inputFileName string, opts Options) ([]UCReco
 		case "H":
 			// Hit record - use target as OTU
 			record.Target = targetLabel
-		case "C":
-			// Cluster centroid - use query as both query and target
+		case "S":
+			// Seed record - use query as both query and target
 			record.Target = queryLabel
-		default:
-			// Skip other record types (N records)
+		case "C", "N":
+			// Skip C records (redundant with S records) and N records (no hits)
 			continue
 		}
 
