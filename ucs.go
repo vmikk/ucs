@@ -463,9 +463,9 @@ func summarizeUC(input *os.File, inputFileName string, opts Options) (int, int, 
 	}
 
 	rowCount := 0
-	querySequences := make(map[string]struct{})
-	targetSequences := make(map[string]struct{})
-	queryToTargets := make(map[string]map[string]struct{})
+	querySequences := make(map[string]struct{})            // Set of unique queries
+	targetSequences := make(map[string]struct{})           // Set of unique targets
+	queryToTargets := make(map[string]map[string]struct{}) // unique query to target pairs
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -479,6 +479,9 @@ func summarizeUC(input *os.File, inputFileName string, opts Options) (int, int, 
 
 		rowCount++
 		queryLabel := splitSeqID(fields[8], opts.splitSeqID)
+
+		// Add query to the set of unique queries
+		querySequences[queryLabel] = struct{}{}
 
 		targetLabel := splitSeqID(fields[9], opts.splitSeqID)
 		if fields[0] == "S" {
