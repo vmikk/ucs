@@ -13,7 +13,7 @@ import (
 	"github.com/parquet-go/parquet-go/compress/zstd"
 )
 
-// Add new type to store command options
+// A type to store command options
 type Options struct {
 	inputFile   string
 	outputFile  string
@@ -38,7 +38,7 @@ type UCRecord struct {
 	Target        string   // Field 9: Target/centroid sequence ID
 }
 
-// Add new type for Parquet output
+// A type for Parquet output
 type ParquetRecord struct {
 	RecordType    string   `parquet:"record_type"`
 	ClusterNumber uint32   `parquet:"cluster_number"`
@@ -98,21 +98,18 @@ func main() {
 		}
 		err = writeSummary(output, rowCount, uniqueQuerySequences, uniqueTargetSequences, multiMappedQueries)
 	} else {
-		records, err := processUCFile(input, opts.inputFile, opts)
-		if err != nil {
-			fatalError("Error processing file: %v", err)
-		}
-
 		writer := bufio.NewWriter(output)
-		err = writeUCRecords(writer, records, opts)
-		if err != nil {
-			fatalError("Error writing output: %v", err)
+		defer writer.Flush()
+
+		if strings.HasSuffix(opts.outputFile, ".parquet") {
+			err = processAndWriteParquet(input, opts.outputFile, opts)
+		} else {
+			err = processAndWriteText(input, writer, opts)
 		}
-		writer.Flush()
 	}
 
 	if err != nil {
-		fatalError("Error writing output: %v", err)
+		fatalError("Error processing file: %v", err)
 	}
 }
 
@@ -192,64 +189,37 @@ func createOutputFile(fileName string) (*os.File, error) {
 	return os.Create(fileName)
 }
 
-func processUCFile(input *os.File, inputFileName string, opts Options) ([]UCRecord, error) {
-	scanner, err := createScanner(input, inputFileName)
+// Streaming processor for text output
+func processAndWriteText(input *os.File, writer *bufio.Writer, opts Options) error {
+	scanner, err := createScanner(input, opts.inputFile)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	var records []UCRecord
-	seenPairs := make(map[string]struct{})        // For duplicate detection
-	queryToTargets := make(map[string][]UCRecord) // Track targets per query
+	seenPairs := make(map[string]struct{})
+	queryToTargets := make(map[string]map[string]struct{})
 	duplicateCount := 0
 
+	// Write header first
+	if opts.mapOnly {
+		if _, err := writer.WriteString("Query\tOTU\n"); err != nil {
+			return err
+		}
+	} else {
+		if _, err := writer.WriteString("recordType\tclusterNumber\tsize\tidentity\tstrand\tunused1\tunused2\tcigar\tquery\ttarget\n"); err != nil {
+			return err
+		}
+	}
+
+	// Process records one by one
 	for scanner.Scan() {
-		line := scanner.Text()
-		fields := strings.Split(line, "\t")
-
-		// Skip broken lines
-		if len(fields) < 10 {
+		record, ok := parseUCRecord(scanner.Text(), opts)
+		if !ok {
 			continue
 		}
 
-		// Process labels directly
-		queryLabel := splitSeqID(fields[8], opts.splitSeqID)
-		targetLabel := splitSeqID(fields[9], opts.splitSeqID)
-
-		record := UCRecord{
-			RecordType:    fields[0],
-			ClusterNumber: parseIntOrZero(fields[1]),
-			Size:          parseIntOrZero(fields[2]),
-			Identity:      parseFloatOrZero(fields[3]),
-			Strand:        parseStrand(fields[4]),
-			Unused1:       fields[5],
-			Unused2:       fields[6],
-			CIGAR:         fields[7],
-			Query:         queryLabel,
-			Target:        targetLabel,
-		}
-
-		// Process OTU mapping based on record type
-		switch record.RecordType {
-		case "H":
-			// Hit record - use target as OTU
-			record.Target = targetLabel
-		case "S":
-			// Seed record - use query as both query and target
-			record.Target = queryLabel
-		case "C", "N":
-			// Skip C records (redundant with S records) and N records (no hits)
-			continue
-		}
-
-		// Check for duplicates if removal is enabled
 		if opts.removeDups {
-			var pairKeyBuilder strings.Builder
-			pairKeyBuilder.WriteString(record.Query)
-			pairKeyBuilder.WriteByte('\t')
-			pairKeyBuilder.WriteString(record.Target)
-			pairKey := pairKeyBuilder.String()
-
+			pairKey := record.Query + "\t" + record.Target
 			if _, exists := seenPairs[pairKey]; exists {
 				duplicateCount++
 				continue
@@ -258,201 +228,133 @@ func processUCFile(input *os.File, inputFileName string, opts Options) ([]UCReco
 		}
 
 		if opts.multiMapped {
-			queryToTargets[record.Query] = append(queryToTargets[record.Query], record)
+			if _, exists := queryToTargets[record.Query]; !exists {
+				queryToTargets[record.Query] = make(map[string]struct{})
+			}
+			queryToTargets[record.Query][record.Target] = struct{}{}
 		} else {
-			records = append(records, record)
+			if err := writeUCRecord(writer, record, opts); err != nil {
+				return err
+			}
 		}
 	}
 
-	// If multi-mapped mode is enabled, filter for queries with multiple targets
+	// Handle multi-mapped queries if needed
 	if opts.multiMapped {
-		for _, queryRecords := range queryToTargets {
-			// Get unique targets for this query
-			targets := make(map[string]struct{})
-			for _, r := range queryRecords {
-				targets[r.Target] = struct{}{}
-			}
-
-			// If query maps to multiple targets, add all its records
+		for query, targets := range queryToTargets {
 			if len(targets) > 1 {
-				records = append(records, queryRecords...)
+				for target := range targets {
+					record := UCRecord{Query: query, Target: target}
+					if err := writeUCRecord(writer, record, opts); err != nil {
+						return err
+					}
+				}
 			}
 		}
 	}
 
-	// Print duplicate count to stderr in red color if any duplicates were found
 	if duplicateCount > 0 {
 		fmt.Fprintf(os.Stderr, "\033[31mucs: removed %d duplicate entries\033[0m\n", duplicateCount)
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("reading input: %w", err)
-	}
-
-	return records, nil
+	return scanner.Err()
 }
 
-func writeUCRecords(writer *bufio.Writer, records []UCRecord, opts Options) error {
-	// Check if output is Parquet format
-	if strings.HasSuffix(opts.outputFile, ".parquet") {
-		return writeParquetRecords(opts.outputFile, records, opts)
-	}
-
-	var sb strings.Builder
-	if opts.mapOnly {
-		// Write header for Query-OTU mapping
-		sb.WriteString("Query\tOTU\n")
-
-		// Write data
-		for _, record := range records {
-			sb.WriteString(record.Query)
-			sb.WriteByte('\t')
-			sb.WriteString(record.Target)
-			sb.WriteByte('\n')
-		}
-	} else {
-		// Write header for full table
-		sb.WriteString("recordType\tclusterNumber\tsize\tidentity\tstrand\tunused1\tunused2\tcigar\tquery\ttarget\n")
-
-		// Write data
-		for _, record := range records {
-			strandStr := "*"
-			if record.Strand != nil {
-				strandStr = string(*record.Strand)
-			}
-
-			identityStr := "*"
-			if record.Identity != nil {
-				identityStr = fmt.Sprintf("%.2f", *record.Identity)
-			}
-
-			sb.WriteString(record.RecordType)
-			sb.WriteByte('\t')
-			sb.WriteString(strconv.FormatUint(uint64(record.ClusterNumber), 10))
-			sb.WriteByte('\t')
-			sb.WriteString(strconv.FormatUint(uint64(record.Size), 10))
-			sb.WriteByte('\t')
-			sb.WriteString(identityStr)
-			sb.WriteByte('\t')
-			sb.WriteString(strandStr)
-			sb.WriteByte('\t')
-			sb.WriteString(record.Unused1)
-			sb.WriteByte('\t')
-			sb.WriteString(record.Unused2)
-			sb.WriteByte('\t')
-			sb.WriteString(record.CIGAR)
-			sb.WriteByte('\t')
-			sb.WriteString(record.Query)
-			sb.WriteByte('\t')
-			sb.WriteString(record.Target)
-			sb.WriteByte('\n')
-		}
-	}
-
-	_, err := writer.WriteString(sb.String())
-	return err
-}
-
-// Parquet writing function
-func writeParquetRecords(outputFile string, records []UCRecord, opts Options) error {
-	// Open the output file
+// Streaming processor for Parquet output
+func processAndWriteParquet(input *os.File, outputFile string, opts Options) error {
 	f, err := os.Create(outputFile)
 	if err != nil {
 		return fmt.Errorf("creating output file: %w", err)
 	}
 	defer f.Close()
 
-	// Map-only mode (Query-OTU table)
+	scanner, err := createScanner(input, opts.inputFile)
+	if err != nil {
+		return err
+	}
+
 	if opts.mapOnly {
-		// Define simple record type for map-only mode
-		type SimpleRecord struct {
+		type MapRecord struct {
 			Query string `parquet:"query"`
 			OTU   string `parquet:"otu"`
 		}
-
-		// Create writer with ZSTD compression
-		writer := parquet.NewGenericWriter[SimpleRecord](f,
-			parquet.Compression(&zstd.Codec{}),
-		)
+		writer := parquet.NewGenericWriter[MapRecord](f, parquet.Compression(&zstd.Codec{}))
 		defer writer.Close()
 
-		// Convert to simplified records
-		simpleRecords := make([]SimpleRecord, len(records))
-		for i, record := range records {
-			simpleRecords[i].Query = record.Query
-			simpleRecords[i].OTU = record.Target
-		}
+		seenPairs := make(map[string]struct{})
+		for scanner.Scan() {
+			record, ok := parseUCRecord(scanner.Text(), opts)
+			if !ok {
+				continue
+			}
 
-		// Write records
-		if _, err := writer.Write(simpleRecords); err != nil {
-			return fmt.Errorf("writing parquet records: %w", err)
+			if opts.removeDups {
+				pairKey := record.Query + "\t" + record.Target
+				if _, exists := seenPairs[pairKey]; exists {
+					continue
+				}
+				seenPairs[pairKey] = struct{}{}
+			}
+
+			mapRecord := MapRecord{
+				Query: record.Query,
+				OTU:   record.Target,
+			}
+			if _, err := writer.Write([]MapRecord{mapRecord}); err != nil {
+				return fmt.Errorf("writing map record: %w", err)
+			}
 		}
 	} else {
-		// Create writer with ZSTD compression for full records
-		writer := parquet.NewGenericWriter[ParquetRecord](f,
-			parquet.Compression(&zstd.Codec{}),
-		)
+		writer := parquet.NewGenericWriter[ParquetRecord](f, parquet.Compression(&zstd.Codec{}))
 		defer writer.Close()
 
-		// Convert to parquet records
-		parquetRecords := make([]ParquetRecord, len(records))
-		for i, record := range records {
-			parquetRecords[i] = record.ToParquet()
+		seenPairs := make(map[string]struct{})
+		for scanner.Scan() {
+			record, ok := parseUCRecord(scanner.Text(), opts)
+			if !ok {
+				continue
+			}
+
+			if opts.removeDups {
+				pairKey := record.Query + "\t" + record.Target
+				if _, exists := seenPairs[pairKey]; exists {
+					continue
+				}
+				seenPairs[pairKey] = struct{}{}
+			}
+
+			parquetRecord := record.ToParquet()
+			if _, err := writer.Write([]ParquetRecord{parquetRecord}); err != nil {
+				return fmt.Errorf("writing parquet record: %w", err)
+			}
 		}
-
-		// Write records
-		if _, err := writer.Write(parquetRecords); err != nil {
-			return fmt.Errorf("writing parquet records: %w", err)
-		}
 	}
 
-	return nil
+	return scanner.Err()
 }
 
-// Split sequence ID at semicolon
-func splitSeqID(id string, split bool) string {
-	if !split {
-		return id
+// Helper function to write a single record
+func writeUCRecord(writer *bufio.Writer, record UCRecord, opts Options) error {
+	if opts.mapOnly {
+		_, err := fmt.Fprintf(writer, "%s\t%s\n", record.Query, record.Target)
+		return err
 	}
-	parts := strings.Split(id, ";")
-	return parts[0]
-}
 
-// Parse integer fields (ClusterNumber and Size)
-func parseIntOrZero(s string) uint32 {
-	if s == "*" {
-		return 0
+	strandStr := "*"
+	if record.Strand != nil {
+		strandStr = string(*record.Strand)
 	}
-	val, err := strconv.ParseUint(s, 10, 32)
-	if err != nil {
-		return 0
-	}
-	return uint32(val)
-}
 
-// Parse float fields (Identity)
-func parseFloatOrZero(s string) *float64 {
-	if s == "*" {
-		return nil
+	identityStr := "*"
+	if record.Identity != nil {
+		identityStr = fmt.Sprintf("%.2f", *record.Identity)
 	}
-	val, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return nil
-	}
-	return &val
-}
 
-// Parse strand
-func parseStrand(s string) *byte {
-	if s == "+" {
-		b := byte('+')
-		return &b
-	}
-	if s == "-" {
-		b := byte('-')
-		return &b
-	}
-	return nil
+	_, err := fmt.Fprintf(writer, "%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		record.RecordType, record.ClusterNumber, record.Size,
+		identityStr, strandStr, record.Unused1, record.Unused2,
+		record.CIGAR, record.Query, record.Target)
+	return err
 }
 
 // UC file summary
@@ -580,4 +482,57 @@ func createScanner(input *os.File, inputFileName string) (*bufio.Scanner, error)
 	}
 
 	return bufio.NewScanner(reader), nil
+}
+
+// Parse a UC record from a line of text
+func parseUCRecord(line string, opts Options) (UCRecord, bool) {
+	fields := strings.Split(line, "\t")
+	if len(fields) < 10 {
+		return UCRecord{}, false
+	}
+
+	// Skip C records as they are redundant
+	if fields[0] == "C" {
+		return UCRecord{}, false
+	}
+
+	record := UCRecord{
+		RecordType: fields[0],
+		Query:      splitSeqID(fields[8], opts.splitSeqID),
+		Target:     splitSeqID(fields[9], opts.splitSeqID),
+	}
+
+	// Parse optional fields
+	if fields[0] != "H" && fields[0] != "N" {
+		if num, err := strconv.ParseUint(fields[1], 10, 32); err == nil {
+			record.ClusterNumber = uint32(num)
+		}
+		if num, err := strconv.ParseUint(fields[2], 10, 32); err == nil {
+			record.Size = uint32(num)
+		}
+		if fields[3] != "*" {
+			if val, err := strconv.ParseFloat(fields[3], 64); err == nil {
+				record.Identity = &val
+			}
+		}
+		if fields[4] != "*" {
+			strand := fields[4][0]
+			record.Strand = &strand
+		}
+	}
+
+	record.Unused1 = fields[5]
+	record.Unused2 = fields[6]
+	record.CIGAR = fields[7]
+
+	return record, true
+}
+
+// Split sequence ID at semicolon if enabled
+func splitSeqID(id string, split bool) string {
+	if !split {
+		return id
+	}
+	parts := strings.SplitN(id, ";", 2)
+	return parts[0]
 }
