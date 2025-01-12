@@ -496,14 +496,30 @@ func parseUCRecord(line string, opts Options) (UCRecord, bool) {
 		return UCRecord{}, false
 	}
 
+	queryLabel := splitSeqID(fields[8], opts.splitSeqID)
+	targetLabel := splitSeqID(fields[9], opts.splitSeqID)
+
 	record := UCRecord{
 		RecordType: fields[0],
-		Query:      splitSeqID(fields[8], opts.splitSeqID),
-		Target:     splitSeqID(fields[9], opts.splitSeqID),
+		Query:      queryLabel,
+		Target:     targetLabel,
 	}
 
-	// Parse optional fields
-	if fields[0] != "H" && fields[0] != "N" {
+	// Process target based on record type
+	switch record.RecordType {
+	case "H":
+		// Hit record - use target as is
+		record.Target = targetLabel
+	case "S":
+		// Seed record - use query as both query and target
+		record.Target = queryLabel
+	case "N":
+		// No hit - use query as target
+		record.Target = queryLabel
+	}
+
+	// Parse optional fields for non-N and non-H records
+	if record.RecordType != "H" && record.RecordType != "N" {
 		if num, err := strconv.ParseUint(fields[1], 10, 32); err == nil {
 			record.ClusterNumber = uint32(num)
 		}
