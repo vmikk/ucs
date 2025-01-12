@@ -202,7 +202,7 @@ func processAndWriteText(input *os.File, writer *bufio.Writer, opts Options) err
 
 	// Write header first
 	if opts.mapOnly {
-		if _, err := writer.WriteString("Query\tOTU\n"); err != nil {
+		if _, err := writer.WriteString("Query\tTarget\n"); err != nil {
 			return err
 		}
 	} else {
@@ -275,8 +275,8 @@ func processAndWriteParquet(input *os.File, outputFile string, opts Options) err
 
 	if opts.mapOnly {
 		type MapRecord struct {
-			Query string `parquet:"query"`
-			OTU   string `parquet:"otu"`
+			Query  string `parquet:"query"`
+			Target string `parquet:"target"`
 		}
 		writer := parquet.NewGenericWriter[MapRecord](f, parquet.Compression(&zstd.Codec{}))
 		defer writer.Close()
@@ -297,8 +297,8 @@ func processAndWriteParquet(input *os.File, outputFile string, opts Options) err
 			}
 
 			mapRecord := MapRecord{
-				Query: record.Query,
-				OTU:   record.Target,
+				Query:  record.Query,
+				Target: record.Target,
 			}
 			if _, err := writer.Write([]MapRecord{mapRecord}); err != nil {
 				return fmt.Errorf("writing map record: %w", err)
