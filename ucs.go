@@ -273,12 +273,17 @@ func processAndWriteParquet(input *os.File, outputFile string, opts Options) err
 		return err
 	}
 
+	// Configure ZSTD codec with better compression
+	zstdCodec := &zstd.Codec{
+		Level: zstd.SpeedBetterCompression,
+	}
+
 	if opts.mapOnly {
 		type MapRecord struct {
 			Query  string `parquet:"query"`
 			Target string `parquet:"target"`
 		}
-		writer := parquet.NewGenericWriter[MapRecord](f, parquet.Compression(&zstd.Codec{}))
+		writer := parquet.NewGenericWriter[MapRecord](f, parquet.Compression(zstdCodec))
 		defer writer.Close()
 
 		seenPairs := make(map[string]struct{})
@@ -305,7 +310,7 @@ func processAndWriteParquet(input *os.File, outputFile string, opts Options) err
 			}
 		}
 	} else {
-		writer := parquet.NewGenericWriter[ParquetRecord](f, parquet.Compression(&zstd.Codec{}))
+		writer := parquet.NewGenericWriter[ParquetRecord](f, parquet.Compression(zstdCodec))
 		defer writer.Close()
 
 		seenPairs := make(map[string]struct{})
