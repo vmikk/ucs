@@ -375,16 +375,21 @@ func summarizeUC(input *os.File, inputFileName string, opts Options) (int, int, 
 	queryToTargets := make(map[string]map[string]struct{}) // unique query to target pairs
 
 	for scanner.Scan() {
+		rowCount++ // Count every line
 		line := scanner.Text()
 		fields := strings.Split(line, "\t")
 
 		// Skip broken lines
-		// Skip C records as they are redundant
-		if len(fields) < 10 || fields[0] == "C" {
+		if len(fields) < 10 {
 			continue
 		}
 
-		rowCount++
+		// Skip C records for sequence analysis
+		if fields[0] == "C" {
+			continue
+		}
+
+		// Process all valid non-C records
 		queryLabel := splitSeqID(fields[8], opts.splitSeqID)
 
 		// Add query to the set of unique queries
