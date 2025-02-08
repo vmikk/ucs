@@ -184,6 +184,13 @@ func parseFlags() Options {
 		os.Exit(0)
 	}
 
+	// Check if any flags were provided
+	if flag.NFlag() == 0 && len(flag.Args()) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: no arguments provided\n\n")
+		flag.Usage()
+		os.Exit(1)
+	}
+
 	return opts
 }
 
