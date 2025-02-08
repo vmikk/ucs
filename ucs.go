@@ -13,6 +13,9 @@ import (
 	"github.com/parquet-go/parquet-go/compress/zstd"
 )
 
+// Version information
+const Version = "0.8.0"
+
 // A type to store command options
 type Options struct {
 	inputFile   string
@@ -22,6 +25,7 @@ type Options struct {
 	splitSeqID  bool
 	removeDups  bool
 	multiMapped bool
+	version     bool
 }
 
 // UC record type
@@ -137,6 +141,7 @@ func parseFlags() Options {
 		{"split-id", "S", &opts.splitSeqID, "Split sequence IDs at semicolon (default: true)", true},
 		{"rm-dups", "d", &opts.removeDups, "Remove duplicate Query-Target pairs (default: true)", true},
 		{"multi-mapped", "M", &opts.multiMapped, "Output only queries mapped to multiple targets", false},
+		{"version", "v", &opts.version, "Print version information", false},
 	}
 
 	// Register all flags using a helper function
@@ -172,6 +177,13 @@ func parseFlags() Options {
 	}
 
 	flag.Parse()
+
+	// Handle version flag early
+	if opts.version {
+		fmt.Printf("ucs %s\n", Version)
+		os.Exit(0)
+	}
+
 	return opts
 }
 
