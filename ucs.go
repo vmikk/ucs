@@ -119,7 +119,7 @@ func main() {
 
 // Centralized error handling helper
 func fatalError(format string, a ...interface{}) {
-	fmt.Fprintf(os.Stderr, format+"\n", a...)
+	fmt.Fprintf(os.Stderr, "\033[31m"+format+"\033[0m\n", a...)
 	os.Exit(1)
 }
 
@@ -186,7 +186,7 @@ func parseFlags() Options {
 
 	// Check if any flags were provided
 	if flag.NFlag() == 0 && len(flag.Args()) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: no arguments provided\n\n")
+		fmt.Fprintf(os.Stderr, "\033[31mError: no arguments provided\033[0m\n\n")
 		flag.Usage()
 		os.Exit(1)
 	}
