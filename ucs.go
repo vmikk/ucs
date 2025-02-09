@@ -166,14 +166,37 @@ func parseFlags() Options {
 
 	// Custom usage message
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), `ucs %s - USEARCH/VSEARCH cluster format parser and converter
+
+Usage:
+  %s [flags]
+
+Flags:
+`, Version, os.Args[0])
+		// Find the longest flag combination to determine padding
+		maxLen := 0
+		for _, f := range flagPairs {
+			flagLen := len(f.long) + 2 // --flag
+			if f.short != "" {
+				flagLen += 4 // -x,
+			}
+			if flagLen > maxLen {
+				maxLen = flagLen
+			}
+		}
+
+		// Format string with consistent padding
+		format := fmt.Sprintf("  %%-%ds\t%%s\n", maxLen)
+
 		for _, f := range flagPairs {
 			shortFlag := ""
 			if f.short != "" {
 				shortFlag = fmt.Sprintf("-%s, ", f.short)
 			}
-			fmt.Fprintf(flag.CommandLine.Output(), "  %s--%s\t%s\n", shortFlag, f.long, f.usage)
+			flagName := fmt.Sprintf("%s--%s", shortFlag, f.long)
+			fmt.Fprintf(flag.CommandLine.Output(), format, flagName, f.usage)
 		}
+		fmt.Fprintf(flag.CommandLine.Output(), "\nFor more information, visit https://github.com/vmikk/ucs\n")
 	}
 
 	flag.Parse()
