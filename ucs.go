@@ -275,7 +275,7 @@ func createOutputFile(fileName string) (*os.File, error) {
 func processAndWriteText(input *os.File, writer *bufio.Writer, opts Options) error {
 	scanner, err := createScanner(input, opts.inputFile)
 	if err != nil {
-		return err
+		return newUCError("IO", "failed to create scanner", err)
 	}
 
 	seenPairs := make(map[string]struct{})
@@ -285,16 +285,17 @@ func processAndWriteText(input *os.File, writer *bufio.Writer, opts Options) err
 	// Write header first
 	if opts.mapOnly {
 		if _, err := writer.WriteString("Query\tTarget\n"); err != nil {
-			return err
+			return newUCError("IO", "failed to write header", err)
 		}
 	} else {
 		if _, err := writer.WriteString("recordType\tclusterNumber\tsize\tidentity\tstrand\tunused1\tunused2\tcigar\tquery\ttarget\n"); err != nil {
-			return err
+			return newUCError("IO", "failed to write header", err)
 		}
 	}
 
-	// Process records one by one
+	lineNum := 0
 	for scanner.Scan() {
+		lineNum++
 		record, ok := parseUCRecord(scanner.Text(), opts)
 		if !ok {
 			continue
@@ -316,7 +317,7 @@ func processAndWriteText(input *os.File, writer *bufio.Writer, opts Options) err
 			queryToTargets[record.Query][record.Target] = struct{}{}
 		} else {
 			if err := writeUCRecord(writer, record, opts); err != nil {
-				return err
+				return newUCError("IO", fmt.Sprintf("failed to write record at line %d", lineNum), err)
 			}
 		}
 	}
@@ -328,7 +329,7 @@ func processAndWriteText(input *os.File, writer *bufio.Writer, opts Options) err
 				for target := range targets {
 					record := UCRecord{Query: query, Target: target}
 					if err := writeUCRecord(writer, record, opts); err != nil {
-						return err
+						return newUCError("IO", fmt.Sprintf("failed to write multi-mapped record for query %s and target %s", query, target), err)
 					}
 				}
 			}
@@ -339,7 +340,11 @@ func processAndWriteText(input *os.File, writer *bufio.Writer, opts Options) err
 		fmt.Fprintf(os.Stderr, "\033[31mucs: removed %d duplicate entries\033[0m\n", duplicateCount)
 	}
 
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return newUCError("IO", "error reading input", err)
+	}
+
+	return nil
 }
 
 // Streaming processor for Parquet output
