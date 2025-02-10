@@ -351,13 +351,13 @@ func processAndWriteText(input *os.File, writer *bufio.Writer, opts Options) err
 func processAndWriteParquet(input *os.File, outputFile string, opts Options) error {
 	f, err := os.Create(outputFile)
 	if err != nil {
-		return fmt.Errorf("creating output file: %w", err)
+		return newUCError("IO", "failed to create output file", err)
 	}
 	defer f.Close()
 
 	scanner, err := createScanner(input, opts.inputFile)
 	if err != nil {
-		return err
+		return newUCError("IO", "failed to create scanner", err)
 	}
 
 	// Configure ZSTD codec with better compression
@@ -371,10 +371,17 @@ func processAndWriteParquet(input *os.File, outputFile string, opts Options) err
 			Target string `parquet:"target"`
 		}
 		writer := parquet.NewGenericWriter[MapRecord](f, parquet.Compression(zstdCodec))
-		defer writer.Close()
+		defer func() {
+			if err := writer.Close(); err != nil {
+				// Log the error since we can't return it from the defer
+				fmt.Fprintf(os.Stderr, "\033[31mError closing parquet writer: %v\033[0m\n", err)
+			}
+		}()
 
 		seenPairs := make(map[string]struct{})
+		lineNum := 0
 		for scanner.Scan() {
+			lineNum++
 			record, ok := parseUCRecord(scanner.Text(), opts)
 			if !ok {
 				continue
@@ -393,7 +400,7 @@ func processAndWriteParquet(input *os.File, outputFile string, opts Options) err
 				Target: record.Target,
 			}
 			if _, err := writer.Write([]MapRecord{mapRecord}); err != nil {
-				return fmt.Errorf("writing map record: %w", err)
+				return newUCError("Parquet", fmt.Sprintf("failed to write map record at line %d", lineNum), err)
 			}
 		}
 	} else {
@@ -584,6 +591,8 @@ func createScanner(input *os.File, inputFileName string) (*bufio.Scanner, error)
 // Parse a UC record from a line of text
 func parseUCRecord(line string, opts Options) (UCRecord, bool) {
 	fields := strings.Split(line, "\t")
+
+	// Skip broken lines
 	if len(fields) < 10 {
 		return UCRecord{}, false
 	}
