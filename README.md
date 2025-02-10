@@ -1,6 +1,6 @@
-# UC file summarizer - `ucs`
+# `ucs` - UC file proccessing tool
 
-The `ucs` tool processes USEARCH cluster format (UC) files, 
+The `ucs` tool reads USEARCH cluster format (UC) files, 
 which are tab-separated text files commonly used in clustering and database searches. 
 Each line in a UC file represents a record corresponding to an input sequence, 
 describing cluster-membership information, alignments, and sequence identities. 
