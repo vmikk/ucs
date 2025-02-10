@@ -348,9 +348,7 @@ func processAndWriteParquet(input *os.File, outputFile string, opts Options) err
 	}
 
 	// Configure ZSTD codec with better compression
-	zstdCodec := &zstd.Codec{
-		Level: zstd.SpeedBetterCompression,
-	}
+	zstdCodec := &zstd.Codec{Level: zstd.SpeedBetterCompression}
 
 	if opts.mapOnly {
 		type MapRecord struct {
