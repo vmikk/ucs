@@ -264,6 +264,106 @@ func createOutputFile(fileName string) (*os.File, error) {
 	return os.Create(fileName)
 }
 
+// Split sequence ID at semicolon if enabled
+func splitSeqID(id string, split bool) string {
+	if !split {
+		return id
+	}
+	parts := strings.SplitN(id, ";", 2)
+	return parts[0]
+}
+
+// Parse the full UC record from a line of text
+func parseUCRecord(line string, opts Options) (UCRecord, bool) {
+	fields := strings.Split(line, "\t")
+
+	// Skip broken lines
+	if len(fields) < 10 {
+		return UCRecord{}, false
+	}
+
+	// Skip C records as they are redundant
+	if fields[0] == "C" {
+		return UCRecord{}, false
+	}
+
+	queryLabel := splitSeqID(fields[8], opts.splitSeqID)
+	targetLabel := splitSeqID(fields[9], opts.splitSeqID)
+
+	record := UCRecord{
+		RecordType: fields[0],
+		Query:      queryLabel,
+		Target:     targetLabel,
+	}
+
+	// Process target based on record type
+	switch record.RecordType {
+	case "H":
+		// Hit record - use target as is
+		record.Target = targetLabel
+	case "S":
+		// Seed record - use query as both query and target
+		record.Target = queryLabel
+	case "N":
+		// No hit - use query as target
+		record.Target = queryLabel
+	}
+
+	// Parse optional fields for non-N and non-H records
+	if record.RecordType != "H" && record.RecordType != "N" {
+		if num, err := strconv.ParseUint(fields[1], 10, 32); err == nil {
+			record.ClusterNumber = uint32(num)
+		}
+		if num, err := strconv.ParseUint(fields[2], 10, 32); err == nil {
+			record.Size = uint32(num)
+		}
+		if fields[3] != "*" {
+			if val, err := strconv.ParseFloat(fields[3], 64); err == nil {
+				record.Identity = &val
+			}
+		}
+		if fields[4] != "*" {
+			strand := fields[4][0]
+			record.Strand = &strand
+		}
+	}
+
+	record.Unused1 = fields[5]
+	record.Unused2 = fields[6]
+	record.CIGAR = fields[7]
+
+	return record, true
+}
+
+// Parse only Query and Target fields from a UC record
+func parseMapRecord(line string, split bool) (UCRecord, bool) {
+	// Split only up to field 10 (0-9)
+	fields := strings.SplitN(line, "\t", 10)
+	if len(fields) < 10 {
+		return UCRecord{}, false
+	}
+
+	// Skip C records as they are redundant
+	if fields[0] == "C" {
+		return UCRecord{}, false
+	}
+
+	query := splitSeqID(fields[8], split)
+	target := splitSeqID(fields[9], split)
+
+	// Handle special cases based on record type
+	switch fields[0] {
+	case "S", "N":
+		target = query
+	}
+
+	return UCRecord{
+		RecordType: fields[0],
+		Query:      query,
+		Target:     target,
+	}, true
+}
+
 // UC-file processing logic
 func processRecords(scanner *bufio.Scanner, opts Options, handler func(UCRecord) error) error {
 	seenPairs := make(map[string]struct{})
@@ -271,29 +371,61 @@ func processRecords(scanner *bufio.Scanner, opts Options, handler func(UCRecord)
 	duplicateCount := 0
 	lineNum := 0
 
-	// Process records
 	for scanner.Scan() {
 		lineNum++
-		record, ok := parseUCRecord(scanner.Text(), opts)
-		if !ok {
-			continue
-		}
 
-		if opts.removeDups {
-			pairKey := record.Query + "\t" + record.Target
-			if _, exists := seenPairs[pairKey]; exists {
-				duplicateCount++
+		var err error
+		if opts.mapOnly {
+			// Optimized path for map-only mode
+			record, ok := parseMapRecord(scanner.Text(), opts.splitSeqID)
+			if !ok {
 				continue
 			}
-			seenPairs[pairKey] = struct{}{}
+
+			if opts.removeDups {
+				pairKey := record.Query + "\t" + record.Target
+				if _, exists := seenPairs[pairKey]; exists {
+					duplicateCount++
+					continue
+				}
+				seenPairs[pairKey] = struct{}{}
+			}
+
+			if opts.multiMapped {
+				if _, exists := queryToTargets[record.Query]; !exists {
+					queryToTargets[record.Query] = make(map[string]struct{})
+				}
+				queryToTargets[record.Query][record.Target] = struct{}{}
+			} else {
+				err = handler(record)
+			}
+		} else {
+			// Original path for full record processing
+			record, ok := parseUCRecord(scanner.Text(), opts)
+			if !ok {
+				continue
+			}
+
+			if opts.removeDups {
+				pairKey := record.Query + "\t" + record.Target
+				if _, exists := seenPairs[pairKey]; exists {
+					duplicateCount++
+					continue
+				}
+				seenPairs[pairKey] = struct{}{}
+			}
+
+			if opts.multiMapped {
+				if _, exists := queryToTargets[record.Query]; !exists {
+					queryToTargets[record.Query] = make(map[string]struct{})
+				}
+				queryToTargets[record.Query][record.Target] = struct{}{}
+			} else {
+				err = handler(record)
+			}
 		}
 
-		if opts.multiMapped {
-			if _, exists := queryToTargets[record.Query]; !exists {
-				queryToTargets[record.Query] = make(map[string]struct{})
-			}
-			queryToTargets[record.Query][record.Target] = struct{}{}
-		} else if err := handler(record); err != nil {
+		if err != nil {
 			return newUCError("IO", fmt.Sprintf("failed to write record at line %d", lineNum), err)
 		}
 	}
@@ -537,75 +669,4 @@ func createScanner(input *os.File, inputFileName string) (*bufio.Scanner, error)
 	}
 
 	return bufio.NewScanner(reader), nil
-}
-
-// Parse a UC record from a line of text
-func parseUCRecord(line string, opts Options) (UCRecord, bool) {
-	fields := strings.Split(line, "\t")
-
-	// Skip broken lines
-	if len(fields) < 10 {
-		return UCRecord{}, false
-	}
-
-	// Skip C records as they are redundant
-	if fields[0] == "C" {
-		return UCRecord{}, false
-	}
-
-	queryLabel := splitSeqID(fields[8], opts.splitSeqID)
-	targetLabel := splitSeqID(fields[9], opts.splitSeqID)
-
-	record := UCRecord{
-		RecordType: fields[0],
-		Query:      queryLabel,
-		Target:     targetLabel,
-	}
-
-	// Process target based on record type
-	switch record.RecordType {
-	case "H":
-		// Hit record - use target as is
-		record.Target = targetLabel
-	case "S":
-		// Seed record - use query as both query and target
-		record.Target = queryLabel
-	case "N":
-		// No hit - use query as target
-		record.Target = queryLabel
-	}
-
-	// Parse optional fields for non-N and non-H records
-	if record.RecordType != "H" && record.RecordType != "N" {
-		if num, err := strconv.ParseUint(fields[1], 10, 32); err == nil {
-			record.ClusterNumber = uint32(num)
-		}
-		if num, err := strconv.ParseUint(fields[2], 10, 32); err == nil {
-			record.Size = uint32(num)
-		}
-		if fields[3] != "*" {
-			if val, err := strconv.ParseFloat(fields[3], 64); err == nil {
-				record.Identity = &val
-			}
-		}
-		if fields[4] != "*" {
-			strand := fields[4][0]
-			record.Strand = &strand
-		}
-	}
-
-	record.Unused1 = fields[5]
-	record.Unused2 = fields[6]
-	record.CIGAR = fields[7]
-
-	return record, true
-}
-
-// Split sequence ID at semicolon if enabled
-func splitSeqID(id string, split bool) string {
-	if !split {
-		return id
-	}
-	parts := strings.SplitN(id, ";", 2)
-	return parts[0]
 }
