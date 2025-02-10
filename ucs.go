@@ -301,22 +301,14 @@ func parseUCRecord(line string, opts Options) (UCRecord, bool) {
 	case "H":
 		// Hit record - use target as is
 		record.Target = targetLabel
-	case "S":
-		// Seed record - use query as both query and target
-		record.Target = queryLabel
-	case "N":
-		// No hit - use query as target
-		record.Target = queryLabel
-	}
-
-	// Parse optional fields for non-N and non-H records
-	if record.RecordType != "H" && record.RecordType != "N" {
+		// Parse cluster number and size for H records
 		if num, err := strconv.ParseUint(fields[1], 10, 32); err == nil {
 			record.ClusterNumber = uint32(num)
 		}
 		if num, err := strconv.ParseUint(fields[2], 10, 32); err == nil {
 			record.Size = uint32(num)
 		}
+		// Parse identity and strand for H records
 		if fields[3] != "*" {
 			if val, err := strconv.ParseFloat(fields[3], 64); err == nil {
 				record.Identity = &val
@@ -325,6 +317,27 @@ func parseUCRecord(line string, opts Options) (UCRecord, bool) {
 		if fields[4] != "*" {
 			strand := fields[4][0]
 			record.Strand = &strand
+		}
+	case "S":
+		// Seed record - use query as both query and target
+		record.Target = queryLabel
+		// Parse cluster number and size for S records
+		if num, err := strconv.ParseUint(fields[1], 10, 32); err == nil {
+			record.ClusterNumber = uint32(num)
+		}
+		if num, err := strconv.ParseUint(fields[2], 10, 32); err == nil {
+			record.Size = uint32(num)
+		}
+		// For S records, identity and strand are always "*"
+	case "N":
+		// No hit - use query as target
+		record.Target = queryLabel
+		// For N records, cluster and size should be parsed
+		if num, err := strconv.ParseUint(fields[1], 10, 32); err == nil {
+			record.ClusterNumber = uint32(num)
+		}
+		if num, err := strconv.ParseUint(fields[2], 10, 32); err == nil {
+			record.Size = uint32(num)
 		}
 	}
 
