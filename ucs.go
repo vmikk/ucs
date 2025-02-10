@@ -141,7 +141,25 @@ func main() {
 
 // Centralized error handling helper
 func fatalError(format string, a ...interface{}) {
-	fmt.Fprintf(os.Stderr, "\033[31m"+format+"\033[0m\n", a...)
+	// Red color code
+	const red = "\033[31m"
+	const reset = "\033[0m"
+
+	// Check if the last argument is an error
+	if len(a) > 0 {
+		if err, ok := a[len(a)-1].(error); ok {
+			// If it's a UCError, we can use its structured format
+			if ucErr, ok := err.(*UCError); ok {
+				fmt.Fprintf(os.Stderr, red+"Error: %v"+reset+"\n", ucErr)
+			} else {
+				fmt.Fprintf(os.Stderr, red+"Error: "+format+reset+"\n", a...)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, red+"Error: "+format+reset+"\n", a...)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, red+"Error: "+format+reset+"\n")
+	}
 	os.Exit(1)
 }
 
