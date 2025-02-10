@@ -64,7 +64,7 @@ type UCRecord struct {
 	Target        string   // Field 9: Target/centroid sequence ID
 }
 
-// A type for Parquet output
+// A type for Parquet output (all columns)
 type ParquetRecord struct {
 	RecordType    string   `parquet:"record_type"`
 	ClusterNumber uint32   `parquet:"cluster_number"`
@@ -76,6 +76,12 @@ type ParquetRecord struct {
 	CIGAR         string   `parquet:"cigar"`
 	Query         string   `parquet:"query"`
 	Target        string   `parquet:"target"`
+}
+
+// A type for simplified Parquet output
+type MapRecord struct {
+	Query  string `parquet:"query"`
+	Target string `parquet:"target"`
 }
 
 // Convert UCRecord to ParquetRecord
@@ -258,29 +264,14 @@ func createOutputFile(fileName string) (*os.File, error) {
 	return os.Create(fileName)
 }
 
-// Streaming processor for text output
-func processAndWriteText(input *os.File, writer *bufio.Writer, opts Options) error {
-	scanner, err := createScanner(input, opts.inputFile)
-	if err != nil {
-		return newUCError("IO", "failed to create scanner", err)
-	}
-
+// UC-file processing logic
+func processRecords(scanner *bufio.Scanner, opts Options, handler func(UCRecord) error) error {
 	seenPairs := make(map[string]struct{})
 	queryToTargets := make(map[string]map[string]struct{})
 	duplicateCount := 0
-
-	// Write header first
-	if opts.mapOnly {
-		if _, err := writer.WriteString("Query\tTarget\n"); err != nil {
-			return newUCError("IO", "failed to write header", err)
-		}
-	} else {
-		if _, err := writer.WriteString("recordType\tclusterNumber\tsize\tidentity\tstrand\tunused1\tunused2\tcigar\tquery\ttarget\n"); err != nil {
-			return newUCError("IO", "failed to write header", err)
-		}
-	}
-
 	lineNum := 0
+
+	// Process records
 	for scanner.Scan() {
 		lineNum++
 		record, ok := parseUCRecord(scanner.Text(), opts)
@@ -302,10 +293,8 @@ func processAndWriteText(input *os.File, writer *bufio.Writer, opts Options) err
 				queryToTargets[record.Query] = make(map[string]struct{})
 			}
 			queryToTargets[record.Query][record.Target] = struct{}{}
-		} else {
-			if err := writeUCRecord(writer, record, opts); err != nil {
-				return newUCError("IO", fmt.Sprintf("failed to write record at line %d", lineNum), err)
-			}
+		} else if err := handler(record); err != nil {
+			return newUCError("IO", fmt.Sprintf("failed to write record at line %d", lineNum), err)
 		}
 	}
 
@@ -314,9 +303,8 @@ func processAndWriteText(input *os.File, writer *bufio.Writer, opts Options) err
 		for query, targets := range queryToTargets {
 			if len(targets) > 1 {
 				for target := range targets {
-					record := UCRecord{Query: query, Target: target}
-					if err := writeUCRecord(writer, record, opts); err != nil {
-						return newUCError("IO", fmt.Sprintf("failed to write multi-mapped record for query %s and target %s", query, target), err)
+					if err := handler(UCRecord{Query: query, Target: target}); err != nil {
+						return newUCError("IO", fmt.Sprintf("failed to write multi-mapped record for query %s", query), err)
 					}
 				}
 			}
@@ -327,14 +315,31 @@ func processAndWriteText(input *os.File, writer *bufio.Writer, opts Options) err
 		fmt.Fprintf(os.Stderr, "\033[31mucs: removed %d duplicate entries\033[0m\n", duplicateCount)
 	}
 
-	if err := scanner.Err(); err != nil {
-		return newUCError("IO", "error reading input", err)
-	}
-
-	return nil
+	return scanner.Err()
 }
 
-// Streaming processor for Parquet output
+// Process UC-file and write output into TSV format
+func processAndWriteText(input *os.File, writer *bufio.Writer, opts Options) error {
+	scanner, err := createScanner(input, opts.inputFile)
+	if err != nil {
+		return newUCError("IO", "failed to create scanner", err)
+	}
+
+	// Write header
+	header := "Query\tTarget\n"
+	if !opts.mapOnly {
+		header = "recordType\tclusterNumber\tsize\tidentity\tstrand\tunused1\tunused2\tcigar\tquery\ttarget\n"
+	}
+	if _, err := writer.WriteString(header); err != nil {
+		return newUCError("IO", "failed to write header", err)
+	}
+
+	return processRecords(scanner, opts, func(record UCRecord) error {
+		return writeUCRecord(writer, record, opts)
+	})
+}
+
+// Process UC-file and write output into Parquet format
 func processAndWriteParquet(input *os.File, outputFile string, opts Options) error {
 	f, err := os.Create(outputFile)
 	if err != nil {
@@ -351,10 +356,6 @@ func processAndWriteParquet(input *os.File, outputFile string, opts Options) err
 	zstdCodec := &zstd.Codec{Level: zstd.SpeedBetterCompression}
 
 	if opts.mapOnly {
-		type MapRecord struct {
-			Query  string `parquet:"query"`
-			Target string `parquet:"target"`
-		}
 		writer := parquet.NewGenericWriter[MapRecord](f, parquet.Compression(zstdCodec))
 		defer func() {
 			if err := writer.Close(); err != nil {
@@ -363,58 +364,23 @@ func processAndWriteParquet(input *os.File, outputFile string, opts Options) err
 			}
 		}()
 
-		seenPairs := make(map[string]struct{})
-		lineNum := 0
-		for scanner.Scan() {
-			lineNum++
-			record, ok := parseUCRecord(scanner.Text(), opts)
-			if !ok {
-				continue
-			}
-
-			if opts.removeDups {
-				pairKey := record.Query + "\t" + record.Target
-				if _, exists := seenPairs[pairKey]; exists {
-					continue
-				}
-				seenPairs[pairKey] = struct{}{}
-			}
-
-			mapRecord := MapRecord{
-				Query:  record.Query,
-				Target: record.Target,
-			}
-			if _, err := writer.Write([]MapRecord{mapRecord}); err != nil {
-				return newUCError("Parquet", fmt.Sprintf("failed to write map record at line %d", lineNum), err)
-			}
-		}
-	} else {
-		writer := parquet.NewGenericWriter[ParquetRecord](f, parquet.Compression(zstdCodec))
-		defer writer.Close()
-
-		seenPairs := make(map[string]struct{})
-		for scanner.Scan() {
-			record, ok := parseUCRecord(scanner.Text(), opts)
-			if !ok {
-				continue
-			}
-
-			if opts.removeDups {
-				pairKey := record.Query + "\t" + record.Target
-				if _, exists := seenPairs[pairKey]; exists {
-					continue
-				}
-				seenPairs[pairKey] = struct{}{}
-			}
-
-			parquetRecord := record.ToParquet()
-			if _, err := writer.Write([]ParquetRecord{parquetRecord}); err != nil {
-				return fmt.Errorf("writing parquet record: %w", err)
-			}
-		}
+		return processRecords(scanner, opts, func(record UCRecord) error {
+			_, err := writer.Write([]MapRecord{{Query: record.Query, Target: record.Target}})
+			return err
+		})
 	}
 
-	return scanner.Err()
+	writer := parquet.NewGenericWriter[ParquetRecord](f, parquet.Compression(zstdCodec))
+	defer func() {
+		if err := writer.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "\033[31mError closing parquet writer: %v\033[0m\n", err)
+		}
+	}()
+
+	return processRecords(scanner, opts, func(record UCRecord) error {
+		_, err := writer.Write([]ParquetRecord{record.ToParquet()})
+		return err
+	})
 }
 
 // Helper function to write a single record
