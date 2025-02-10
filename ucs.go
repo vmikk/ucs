@@ -16,6 +16,28 @@ import (
 // Version information
 const Version = "0.8.0"
 
+// Custom error types for better error handling and testing
+type UCError struct {
+	Type    string
+	Message string
+	Err     error
+}
+
+func (e *UCError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("%s: %s: %v", e.Type, e.Message, e.Err)
+	}
+	return fmt.Sprintf("%s: %s", e.Type, e.Message)
+}
+
+func newUCError(errType, msg string, err error) *UCError {
+	return &UCError{
+		Type:    errType,
+		Message: msg,
+		Err:     err,
+	}
+}
+
 // A type to store command options
 type Options struct {
 	inputFile   string
