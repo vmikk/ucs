@@ -124,11 +124,11 @@ func main() {
 	defer output.Close()
 
 	if opts.summary {
-		rowCount, uniqueQuerySequences, uniqueTargetSequences, multiMappedQueries, err := summarizeUC(input, opts.inputFile, opts)
+		rowCount, uniqueQuerySequences, uniqueTargetSequences, multiMappedQueries, duplicateCount, err := summarizeUC(input, opts.inputFile, opts)
 		if err != nil {
 			fatalError("Error processing file: %v", err)
 		}
-		err = writeSummary(output, rowCount, uniqueQuerySequences, uniqueTargetSequences, multiMappedQueries)
+		err = writeSummary(output, rowCount, uniqueQuerySequences, uniqueTargetSequences, multiMappedQueries, duplicateCount)
 	} else {
 		writer := bufio.NewWriter(output)
 		defer writer.Flush()
@@ -553,16 +553,18 @@ func writeUCRecord(writer *bufio.Writer, record UCRecord, opts Options) error {
 }
 
 // UC file summary
-func summarizeUC(input *os.File, inputFileName string, opts Options) (int, int, int, int, error) {
+func summarizeUC(input *os.File, inputFileName string, opts Options) (int, int, int, int, int, error) {
 	scanner, err := createScanner(input, inputFileName)
 	if err != nil {
-		return 0, 0, 0, 0, err
+		return 0, 0, 0, 0, 0, err
 	}
 
 	rowCount := 0
 	querySequences := make(map[string]struct{})            // Set of unique queries
 	targetSequences := make(map[string]struct{})           // Set of unique targets
-	queryToTargets := make(map[string]map[string]struct{}) // unique query to target pairs
+	queryToTargets := make(map[string]map[string]struct{}) // Unique query to target pairs
+	seenPairs := make(map[string]struct{})                 // Set to track duplicates
+	duplicateCount := 0                                    // Number of duplicate query-target pairs
 
 	for scanner.Scan() {
 		rowCount++ // Count every line
@@ -581,14 +583,21 @@ func summarizeUC(input *os.File, inputFileName string, opts Options) (int, int, 
 
 		// Process all valid non-C records
 		queryLabel := splitSeqID(fields[8], opts.splitSeqID)
-
-		// Add query to the set of unique queries
-		querySequences[queryLabel] = struct{}{}
-
 		targetLabel := splitSeqID(fields[9], opts.splitSeqID)
 		if fields[0] == "S" {
 			targetLabel = queryLabel
 		}
+
+		// Check for duplicates
+		pairKey := queryLabel + "\t" + targetLabel
+		if _, exists := seenPairs[pairKey]; exists {
+			duplicateCount++
+			continue
+		}
+		seenPairs[pairKey] = struct{}{}
+
+		// Add query to the set of unique queries
+		querySequences[queryLabel] = struct{}{}
 
 		if _, exists := queryToTargets[queryLabel]; !exists {
 			queryToTargets[queryLabel] = make(map[string]struct{})
@@ -609,22 +618,24 @@ func summarizeUC(input *os.File, inputFileName string, opts Options) (int, int, 
 	}
 
 	if err := scanner.Err(); err != nil {
-		return 0, 0, 0, 0, fmt.Errorf("reading input: %w", err)
+		return 0, 0, 0, 0, 0, fmt.Errorf("reading input: %w", err)
 	}
 
-	return rowCount, len(querySequences), len(targetSequences), multiMappedQueries, nil
+	return rowCount, len(querySequences), len(targetSequences), duplicateCount, multiMappedQueries, nil
 }
 
-func writeSummary(output *os.File, rowCount, uniqueQuerySequences, uniqueTargetSequences, multiMappedQueries int) error {
+func writeSummary(output *os.File, rowCount, uniqueQuerySequences, uniqueTargetSequences, duplicateCount, multiMappedQueries int) error {
 	// Define the rows with their labels and values
 	rows := []struct {
 		label string
 		value int
+		warn  bool // whether to print in red if value > 0
 	}{
-		{"Total lines in the file:", rowCount},
-		{"Unique query sequences:", uniqueQuerySequences},
-		{"Unique target sequences:", uniqueTargetSequences},
-		{"Queries mapped to multiple targets:", multiMappedQueries},
+		{"Total lines in the file:", rowCount, false},
+		{"Unique query sequences:", uniqueQuerySequences, false},
+		{"Unique target sequences:", uniqueTargetSequences, false},
+		{"Duplicate query-target pairs:", duplicateCount, true},
+		{"Queries mapped to multiple targets:", multiMappedQueries, true},
 	}
 
 	// Find the longest label and the longest number
@@ -646,7 +657,7 @@ func writeSummary(output *os.File, rowCount, uniqueQuerySequences, uniqueTargetS
 	var sb strings.Builder
 	// Print each row
 	for _, row := range rows {
-		if row.label == "Queries mapped to multiple targets:" && row.value > 0 {
+		if row.warn && row.value > 0 {
 			sb.WriteString(fmt.Sprintf("\033[31m"+format+"\033[0m", row.label, row.value))
 		} else {
 			sb.WriteString(fmt.Sprintf(format, row.label, row.value))
