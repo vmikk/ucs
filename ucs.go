@@ -8,7 +8,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/briandowns/spinner"
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/compress/zstd"
 )
@@ -108,8 +110,41 @@ func (r UCRecord) ToParquet() ParquetRecord {
 	}
 }
 
+// Helper function to check if we're in an interactive terminal session
+func isInteractive() bool {
+	// Check if stdin and stderr are terminals
+	// We use stderr for spinner to avoid interfering with stdout redirections
+	return isTerminal(os.Stdin) && isTerminal(os.Stderr)
+}
+
+// Helper function to check if file descriptor is a terminal
+func isTerminal(f *os.File) bool {
+	fileInfo, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (fileInfo.Mode() & os.ModeCharDevice) != 0
+}
+
+// Create a spinner instance if we're in interactive mode
+func createSpinner() *spinner.Spinner {
+	if !isInteractive() {
+		return nil
+	}
+	s := spinner.New(spinner.CharSets[14], 100*time.Millisecond, spinner.WithWriter(os.Stderr))
+	s.Color("green")
+	return s
+}
+
 func main() {
 	opts := parseFlags()
+
+	// Create spinner
+	s := createSpinner()
+	if s != nil {
+		s.Start()
+		defer s.Stop()
+	}
 
 	input, err := openInputFile(opts.inputFile)
 	if err != nil {
