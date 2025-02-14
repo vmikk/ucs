@@ -126,58 +126,23 @@ func isTerminal(f *os.File) bool {
 	return (fileInfo.Mode() & os.ModeCharDevice) != 0
 }
 
+const (
+	green         = "\033[32m"
+	reset         = "\033[0m"
+	msgProcessing = green + "Processing UC data..." + reset
+	msgComplete   = green + "Processing complete" + reset
+)
+
 // Create a spinner instance if we're in interactive mode
 func createSpinner() *spinner.Spinner {
 	if !isInteractive() {
 		return nil
 	}
-	s := spinner.New(spinner.CharSets[14], 100*time.Millisecond, spinner.WithWriter(os.Stderr))
+	s := spinner.New(spinner.CharSets[14], 100*time.Millisecond,
+		spinner.WithWriter(os.Stderr),
+		spinner.WithSuffix(" "+msgProcessing))
 	s.Color("green")
 	return s
-}
-
-func main() {
-	opts := parseFlags()
-
-	// Create spinner
-	s := createSpinner()
-	if s != nil {
-		s.Start()
-		defer s.Stop()
-	}
-
-	input, err := openInputFile(opts.inputFile)
-	if err != nil {
-		fatalError("Error opening input file: %v", err)
-	}
-	defer input.Close()
-
-	output, err := createOutputFile(opts.outputFile)
-	if err != nil {
-		fatalError("Error creating output file: %v", err)
-	}
-	defer output.Close()
-
-	if opts.summary {
-		rowCount, uniqueQuerySequences, uniqueTargetSequences, multiMappedQueries, duplicateCount, err := summarizeUC(input, opts.inputFile, opts)
-		if err != nil {
-			fatalError("Error processing file: %v", err)
-		}
-		err = writeSummary(output, rowCount, uniqueQuerySequences, uniqueTargetSequences, multiMappedQueries, duplicateCount)
-	} else {
-		writer := bufio.NewWriter(output)
-		defer writer.Flush()
-
-		if strings.HasSuffix(opts.outputFile, ".parquet") {
-			err = processAndWriteParquet(input, opts.outputFile, opts)
-		} else {
-			err = processAndWriteText(input, writer, opts)
-		}
-	}
-
-	if err != nil {
-		fatalError("Error processing file: %v", err)
-	}
 }
 
 // Centralized error handling helper
@@ -189,6 +154,71 @@ func fatalError(format string, a ...interface{}) {
 	msg := fmt.Sprintf(format, a...)
 	fmt.Fprintf(os.Stderr, red+"Error: %s"+reset+"\n", msg)
 	os.Exit(1)
+}
+
+func main() {
+	opts := parseFlags()
+
+	// Create and start spinner
+	s := createSpinner()
+	if s != nil {
+		s.Start()
+	}
+
+	input, err := openInputFile(opts.inputFile)
+	if err != nil {
+		if s != nil {
+			s.Stop()
+		}
+		fatalError("Error opening input file: %v", err)
+	}
+	defer input.Close()
+
+	output, err := createOutputFile(opts.outputFile)
+	if err != nil {
+		if s != nil {
+			s.Stop()
+		}
+		fatalError("Error creating output file: %v", err)
+	}
+	defer output.Close()
+
+	if opts.summary {
+		rowCount, uniqueQuerySequences, uniqueTargetSequences, multiMappedQueries, duplicateCount, err := summarizeUC(input, opts.inputFile, opts)
+		if err != nil {
+			if s != nil {
+				s.Stop()
+			}
+			fatalError("Error processing file: %v", err)
+		}
+		// Stop spinner before writing summary
+		if s != nil {
+			s.Stop()
+		}
+		err = writeSummary(output, rowCount, uniqueQuerySequences, uniqueTargetSequences, multiMappedQueries, duplicateCount)
+	} else {
+		writer := bufio.NewWriter(output)
+		defer writer.Flush()
+
+		if strings.HasSuffix(opts.outputFile, ".parquet") {
+			err = processAndWriteParquet(input, opts.outputFile, opts, s)
+		} else {
+			err = processAndWriteText(input, writer, opts, s)
+		}
+	}
+
+	if err != nil {
+		if s != nil {
+			s.Stop()
+		}
+		fatalError("Error processing file: %v", err)
+	}
+
+	// Update spinner message on completion and stop
+	if s != nil {
+		s.FinalMSG = msgComplete + "\n"
+		s.Stop()
+	}
 }
 
 // Parse command line flags
@@ -413,7 +443,7 @@ func parseMapRecord(line string, split bool) (UCRecord, bool) {
 }
 
 // UC-file processing logic
-func processRecords(scanner *bufio.Scanner, opts Options, handler func(UCRecord) error) error {
+func processRecords(scanner *bufio.Scanner, opts Options, handler func(UCRecord) error, s *spinner.Spinner) error {
 	seenPairs := make(map[string]struct{})
 	queryToTargets := make(map[string]map[string]struct{})
 	duplicateCount := 0
@@ -492,14 +522,20 @@ func processRecords(scanner *bufio.Scanner, opts Options, handler func(UCRecord)
 	}
 
 	if duplicateCount > 0 {
-		fmt.Fprintf(os.Stderr, "\033[31mucs: removed %d duplicate entries\033[0m\n", duplicateCount)
+		if s != nil {
+			s.Stop() // Stop spinner before showing warning
+			fmt.Fprintf(os.Stderr, "\033[31mucs: removed %d duplicate entries\033[0m\n", duplicateCount)
+			s.Start() // Restart spinner for remaining processing
+		} else {
+			fmt.Fprintf(os.Stderr, "\033[31mucs: removed %d duplicate entries\033[0m\n", duplicateCount)
+		}
 	}
 
 	return scanner.Err()
 }
 
 // Process UC-file and write output into TSV format
-func processAndWriteText(input *os.File, writer *bufio.Writer, opts Options) error {
+func processAndWriteText(input *os.File, writer *bufio.Writer, opts Options, s *spinner.Spinner) error {
 	scanner, err := createScanner(input, opts.inputFile)
 	if err != nil {
 		return newUCError("IO", "failed to create scanner", err)
@@ -516,11 +552,11 @@ func processAndWriteText(input *os.File, writer *bufio.Writer, opts Options) err
 
 	return processRecords(scanner, opts, func(record UCRecord) error {
 		return writeUCRecord(writer, record, opts)
-	})
+	}, s)
 }
 
 // Process UC-file and write output into Parquet format
-func processAndWriteParquet(input *os.File, outputFile string, opts Options) error {
+func processAndWriteParquet(input *os.File, outputFile string, opts Options, s *spinner.Spinner) error {
 	f, err := os.Create(outputFile)
 	if err != nil {
 		return newUCError("IO", "failed to create output file", err)
@@ -547,7 +583,7 @@ func processAndWriteParquet(input *os.File, outputFile string, opts Options) err
 		return processRecords(scanner, opts, func(record UCRecord) error {
 			_, err := writer.Write([]MapRecord{{Query: record.Query, Target: record.Target}})
 			return err
-		})
+		}, s)
 	}
 
 	writer := parquet.NewGenericWriter[ParquetRecord](f, parquet.Compression(zstdCodec))
@@ -560,7 +596,7 @@ func processAndWriteParquet(input *os.File, outputFile string, opts Options) err
 	return processRecords(scanner, opts, func(record UCRecord) error {
 		_, err := writer.Write([]ParquetRecord{record.ToParquet()})
 		return err
-	})
+	}, s)
 }
 
 // Helper function to write a single record
