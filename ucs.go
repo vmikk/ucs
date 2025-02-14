@@ -305,8 +305,13 @@ Flags:
 		os.Exit(0)
 	}
 
-	// Check if any flags were provided
-	if flag.NFlag() == 0 && len(flag.Args()) == 0 {
+	// Auto-detect stdin if no input file specified and stdin is a pipe
+	if opts.inputFile == "-" && !isTerminal(os.Stdin) {
+		opts.inputFile = "-"
+	}
+
+	// Check if any flags were provided or if stdin is a pipe
+	if flag.NFlag() == 0 && len(flag.Args()) == 0 && isTerminal(os.Stdin) {
 		fmt.Fprintf(os.Stderr, "\033[31mError: no arguments provided\033[0m\n\n")
 		flag.Usage()
 		os.Exit(1)
