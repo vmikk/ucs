@@ -167,5 +167,4 @@ var _ = Describe("UCS", func() {
 			Expect(len(targets)).To(BeNumerically("==", 376))
 		})
 	})
-
 })
