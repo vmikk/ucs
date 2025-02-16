@@ -15,3 +15,11 @@ as well as the number of queries with identical names mapped to multiple targets
 ```bash
 ucs -i test.uc.gz -s
 ```
+
+Extract mapping results (only Query and Target columns), 
+remove redundant records and duplicates, 
+save results to text file:
+
+```bash
+ucs -i test.uc.gz -o mappings.txt
+```
