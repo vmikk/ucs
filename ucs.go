@@ -267,10 +267,10 @@ func parseFlags() Options {
 		fmt.Fprintf(flag.CommandLine.Output(), `ucs %s - USEARCH/VSEARCH cluster format parser and converter
 
 Usage:
-  %s [flags]
+  ucs -i <input.uc.gz> -o <output>
 
 Flags:
-`, Version, os.Args[0])
+`, Version)
 		// Find the longest flag combination to determine padding
 		maxLen := 0
 		for _, f := range flagPairs {
